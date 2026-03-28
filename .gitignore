@@ -1,0 +1,25 @@
+# Secrets and Passwords (DO NOT REMOVE)
+.env
+
+# Python Virtual Environments
+env/
+venv/
+.venv/
+
+# Python Cache & Bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE & Editor Folders
+.vscode/
+.idea/
+
+# OS Generated Files (Keeps Mac/Windows junk out of repo)
+.DS_Store
+Thumbs.db
+
+# Testing & Coverage (For tests later)
+.pytest_cache/
+.coverage
