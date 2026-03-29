@@ -1,10 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
+from app.agent.agent import handle_agent_message
+from app.agent.schemas import AgentRequest
 from app.db.database import get_db
 from app.services.order_service import OrderService
+from app.tools.orders import cancel_order, request_refund
+
 
 router = APIRouter()
+
+class RefundRequestBody(BaseModel):
+    reason: str
 
 
 @router.get("/health")
@@ -21,3 +29,34 @@ def get_order(order_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Order not found.")
 
     return order
+
+@router.post("/orders/{order_id}/cancel")
+def cancel_order_route(order_id: str, db: Session = Depends(get_db)):
+    result = cancel_order(order_id, db)
+
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    return result
+
+
+@router.post("/orders/{order_id}/refund")
+def request_refund_route(
+    order_id: str,
+    body: RefundRequestBody,
+    db: Session = Depends(get_db),
+):
+    result = request_refund(order_id, body.reason, db)
+
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    return result
+
+@router.post("/agent/chat")
+def agent_chat(body: AgentRequest, db: Session = Depends(get_db)):
+    return handle_agent_message(
+        user_id=body.user_id,
+        message=body.message,
+        db=db
+    )

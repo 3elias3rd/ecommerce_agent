@@ -4,3 +4,7 @@ sqlalchemy
 pydantic
 pydantic-settings
 python-dotenv
+pytest
+pytest-asyncio 
+pytest
+httpx
