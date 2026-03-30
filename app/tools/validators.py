@@ -27,7 +27,7 @@ def validate_refund_request(order: Order, reason:str, has_existing_refund: bool)
         return False, "Cancelled orders cannot be refunded."
     
     if order.status != OrderStatus.DELIVERED.value:
-        return False, "Only delivered orders are eligible for refund requests."
+        return False, "Refunds can only be requested after an order has been delivered."
     
     if has_existing_refund:
         return False, "A refund has already been requested for this order."

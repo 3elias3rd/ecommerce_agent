@@ -47,7 +47,7 @@ class TestRefundTool:
         result = request_refund("ORD-1001", "Changed my mind", seeded_db)
 
         assert result["success"] is False
-        assert result["message"] == "Only delivered orders are eligible for refund requests."
+        assert result["message"] == "Refunds can only be requested after an order has been delivered."
         
     
     def test_request_refund_requires_reason(self, seeded_db):
