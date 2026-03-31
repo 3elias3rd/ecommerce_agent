@@ -51,9 +51,8 @@ class OrderService:
         logger.info(f"cancel_order success | order_id={order_id} | new_status={order.status}")
         return {
             "success": True,
-            "message": f"Order {order_id} has been cancelled successfully.\n"
-            "\nIf you need anything else feel free to ask.",
-            
+            "message": "Order cancelled successfully.",
+            "order": self.get_order_summary(order_id),
         }
     
     def request_refund(self, order_id: str, reason: str) -> dict:
@@ -92,8 +91,7 @@ class OrderService:
 
         return {
             "success": True,
-            "message": "Refund request submitted for ORD-1003 has been submitted successfully.\n"
-            "\nWe'll review it shorly.",
+            "message": "Refund request submitted successfully.",
             "refund": {
                 "refund_id": refund.id,
                 "order_id": refund.order_id,

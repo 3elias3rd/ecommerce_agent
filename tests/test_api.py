@@ -53,7 +53,7 @@ class TestActionAPI:
         )
 
         assert response.status_code == 400
-        assert response.json()["detail"] == "Refunds can only be requested after an order has been delivered."
+        assert response.json()["detail"] == "Only delivered orders are eligible for refund requests."
 
 class TestAgentApi:
     def test_agent_lookup(self, client):
