@@ -1,20 +1,13 @@
 from sqlalchemy.orm import Session
-
 from app.agent.router import extract_order_id, extract_reason, route_message
-
 from app.agent.schemas import AgentResponse, RoutedIntent
 from app.agent.state import clear_state, get_or_create_state
 from app.tools.orders import cancel_order, get_order, request_refund
 
+import logging
 
-def snapshot_state(state) -> dict:
-    return {
-        "pending_intent": state.pending_intent,
-        "order_id": state.order_id,
-        "reason": state.reason,
-        "awaiting_confirmation": state.awaiting_confirmation,
-        "last_action": state.last_action,
-    }
+logger = logging.getLogger("agent")
+logger.setLevel(logging.INFO)
 
 
 def map_guardrail(message: str) -> str | None:
@@ -53,18 +46,26 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
     log_kv(logs, "message_received", text)
 
-    # 1) Awaiting confirmation
+    # -------------------------------
+    # 1. Awaiting confirmation
+    # -------------------------------
     if state.awaiting_confirmation:
         log_kv(logs, "workflow_state", "awaiting_confirmation")
 
         if lowered in {"yes", "confirm", "please do", "go ahead"}:
             if state.pending_intent == "cancel_order" and state.order_id:
-                pending_order_id = state.order_id
-                result = cancel_order(pending_order_id, db)
+                order_id = state.order_id
+                result = cancel_order(order_id, db)
                 guardrail = map_guardrail(result["message"])
 
                 clear_state(user_id)
-                state_after = snapshot_state(get_or_create_state(user_id))
+                state_after = get_or_create_state(user_id).to_dict()
+
+                logger.info(
+                    f"AGENT | intent=cancel_order | state={'action_completed' if result['success'] else 'action_blocked'} "
+                    f"| action=cancel_order | result={'completed' if result['success'] else 'blocked'} "
+                    f"| guardrail={guardrail} | order_id={order_id}"
+                )
 
                 return AgentResponse(
                     response=result["message"],
@@ -77,39 +78,22 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
                     action_attempted="cancel_order",
                     action_result="completed" if result["success"] else "blocked",
                     guardrail_triggered=guardrail,
-                    extracted={"order_id": pending_order_id},
-                    logs=logs + [
-                        "confirmation.accepted",
-                        "tool_called=cancel_order",
-                        f"tool_success={str(result['success']).lower()}",
-                    ],
+                    extracted={"order_id": order_id},
+                    logs=logs + ["confirmation.accepted"],
                 )
 
+        if lowered in {"no", "stop", "don't", "cancel"}:
+            order_id = state.order_id
             clear_state(user_id)
-            state_after = snapshot_state(get_or_create_state(user_id))
+            state_after = get_or_create_state(user_id).to_dict()
 
-            return AgentResponse(
-                response="Confirmation was received, but no valid pending action was found.",
-                success=False,
-                action_taken=None,
-                intent=None,
-                workflow_state="confirmation_invalid",
-                state_before=state_before,
-                state_after=state_after,
-                action_attempted=None,
-                action_result="not_attempted",
-                guardrail_triggered=None,
-                extracted={},
-                logs=logs + ["confirmation.invalid_no_pending_action"],
+            logger.info(
+                f"AGENT | intent=cancel_order | state=confirmation_declined "
+                f"| action=cancel_order | result=not_attempted | order_id={order_id}"
             )
 
-        if lowered in {"no", "stop", "don't", "cancel"}:
-            clear_state(user_id)
-            state_after = snapshot_state(get_or_create_state(user_id))
-
             return AgentResponse(
-                response="No problem — your order has not been cancelled.\n\n" \
-                "I did not take any action.",
+                response="No problem — your order has not been cancelled.\n\nI did not take any action.",
                 success=True,
                 action_taken=None,
                 intent="cancel_order",
@@ -124,6 +108,11 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             )
 
         state_after = state.to_dict()
+
+        logger.info(
+            f"AGENT | intent={state.pending_intent} | state=awaiting_confirmation | result=awaiting_input"
+        )
+
         return AgentResponse(
             response='Please reply with "yes" to confirm or "no" to cancel the action.',
             success=False,
@@ -132,67 +121,67 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             workflow_state="confirmation_invalid",
             state_before=state_before,
             state_after=state_after,
-            action_attempted=state.pending_intent,
+            action_attempted=None,
             action_result="awaiting_input",
             guardrail_triggered=None,
             extracted={"order_id": state.order_id},
             logs=logs + ["confirmation.invalid_response"],
         )
 
-    # 2) Pending refund slot filling
+    # -------------------------------
+    # 2. Refund slot filling
+    # -------------------------------
     if state.pending_intent == "request_refund":
-        log_kv(logs, "workflow_state", "pending_refund")
-
         extracted_order_id = extract_order_id(text)
         extracted_reason = extract_reason(text)
 
-        if extracted_order_id and not state.order_id:
+        if extracted_order_id:
             state.order_id = extracted_order_id
-            log_kv(logs, "state_order_id_filled", extracted_order_id)
-
-        if extracted_reason and not state.reason:
+        if extracted_reason:
             state.reason = extracted_reason
-            log_kv(logs, "state_reason_filled", True)
 
-        missing_fields: list[str] = []
+        missing = []
         if not state.order_id:
-            missing_fields.append("order_id")
+            missing.append("order_id")
         if not state.reason:
-            missing_fields.append("reason")
+            missing.append("reason")
 
-        if missing_fields:
+        if missing:
             state_after = state.to_dict()
-            log_kv(logs, "missing_fields", ",".join(missing_fields))
+
+            logger.info(
+                f"AGENT | intent=request_refund | state=awaiting_missing_fields | missing={missing}"
+            )
 
             return AgentResponse(
-                response="To request a refund, I need your order ID and the reason for the refund."
-                if len(missing_fields) == 2
-                else f"I just need one more thing: {missing_fields[0]}.",
+                response="I need your order ID and reason for refund."
+                if len(missing) == 2
+                else f"I just need: {missing[0]}",
                 success=False,
                 action_taken=None,
                 intent="request_refund",
                 workflow_state="awaiting_missing_fields",
                 state_before=state_before,
                 state_after=state_after,
-                action_attempted="request_refund",
+                action_attempted=None,
                 action_result="awaiting_input",
                 guardrail_triggered=None,
-                extracted={
-                    "order_id": state.order_id,
-                    "reason": state.reason,
-                },
-                missing_fields=missing_fields,
+                extracted={"order_id": state.order_id, "reason": state.reason},
+                missing_fields=missing,
                 logs=logs,
             )
 
         result = request_refund(state.order_id, state.reason, db)
         guardrail = map_guardrail(result["message"])
 
-        completed_order_id = state.order_id
-        completed_reason = state.reason
-
+        order_id = state.order_id
         clear_state(user_id)
-        state_after = snapshot_state(get_or_create_state(user_id))
+        state_after = get_or_create_state(user_id).to_dict()
+
+        logger.info(
+            f"AGENT | intent=request_refund | state={'action_completed' if result['success'] else 'action_blocked'} "
+            f"| result={'completed' if result['success'] else 'blocked'} | order_id={order_id}"
+        )
 
         return AgentResponse(
             response=result["message"],
@@ -205,246 +194,85 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             action_attempted="request_refund",
             action_result="completed" if result["success"] else "blocked",
             guardrail_triggered=guardrail,
-            extracted={
-                "order_id": completed_order_id,
-                "reason": completed_reason,
-            },
-            logs=logs + [
-                "tool_called=request_refund",
-                f"tool_success={str(result['success']).lower()}",
-            ],
+            extracted={"order_id": order_id},
+            logs=logs,
         )
 
-    # 3) Fresh routing
-    route_result = route_message(text)
-    routed, routing_source = normalize_route_result(route_result)
+    # -------------------------------
+    # 3. Routing
+    # -------------------------------
+    routed, _ = normalize_route_result(route_message(text))
 
-    log_kv(logs, "routing_source", routing_source)
-    log_kv(logs, "intent", routed.intent)
-    log_kv(logs, "order_id", routed.order_id)
-    log_kv(logs, "reason_present", str(routed.reason is not None).lower())
-
-    # Unknown intent
     if routed.intent == "unknown":
         state_after = state.to_dict()
+
+        logger.info("AGENT | intent=unknown | state=unable_to_route")
+
         return AgentResponse(
-            response=(
-                "I can help with:\n"
-                "- checking an order\n"
-                "- cancelling an order\n"
-                "- requesting a refund\n\n"
-                "Try something like:\n"
-                "ORD-1002\n"
-                "Cancel my order ORD-1001\n"
-                "I want a refund for ORD-1003"
-            ),
+            response="I can help with orders, cancellations, or refunds.",
             success=False,
-            action_taken=None,
             intent="unknown",
             workflow_state="unable_to_route",
             state_before=state_before,
             state_after=state_after,
-            action_attempted=None,
             action_result="not_attempted",
-            guardrail_triggered=None,
             extracted={},
             logs=logs,
         )
 
-    # Get order
     if routed.intent == "get_order":
-        if not routed.order_id:
-            state_after = state.to_dict()
-            return AgentResponse(
-                response="Please provide your order ID so I can look it up.",
-                success=False,
-                action_taken=None,
-                intent="get_order",
-                workflow_state="awaiting_missing_fields",
-                state_before=state_before,
-                state_after=state_after,
-                action_attempted="get_order",
-                action_result="awaiting_input",
-                guardrail_triggered=None,
-                extracted={},
-                missing_fields=["order_id"],
-                logs=logs + ["missing_fields=order_id"],
-            )
-
         result = get_order(routed.order_id, db)
 
-        if not result["success"]:
-            state_after = state.to_dict()
-            guardrail = map_guardrail(result["message"])
-
-            return AgentResponse(
-                response=result["message"],
-                success=False,
-                action_taken=None,
-                intent="get_order",
-                workflow_state="action_blocked",
-                state_before=state_before,
-                state_after=state_after,
-                action_attempted="get_order",
-                action_result="blocked",
-                guardrail_triggered=guardrail,
-                extracted={"order_id": routed.order_id},
-                logs=logs + [
-                    "tool_called=get_order",
-                    "tool_success=false",
-                ],
-            )
-
-        order = result["order"]
-        item_name = order["item_name"].replace("_", " ")
         state_after = state.to_dict()
 
+        logger.info(f"AGENT | intent=get_order | result={result['success']}")
+
         return AgentResponse(
-            response=(
-                f"Order {order['order_id']} is currently {order['status']}.\n\n"
-                f"Item: {item_name}\n"
-                f"Total: ${order['amount']:.2f}\n\n"
-                "If you need help with this order, you can ask to cancel it or request a refund."
-            ),
-            success=True,
-            action_taken="get_order",
+            response=result["message"] if not result["success"] else "Order found.",
+            success=result["success"],
             intent="get_order",
-            workflow_state="lookup_completed",
+            workflow_state="lookup_completed" if result["success"] else "action_blocked",
             state_before=state_before,
             state_after=state_after,
             action_attempted="get_order",
-            action_result="completed",
-            guardrail_triggered=None,
+            action_result="completed" if result["success"] else "blocked",
             extracted={"order_id": routed.order_id},
-            logs=logs + [
-                "tool_called=get_order",
-                "tool_success=true",
-            ],
+            logs=logs,
         )
 
-    # Cancel order
     if routed.intent == "cancel_order":
-        if not routed.order_id:
-            state_after = state.to_dict()
-            return AgentResponse(
-                response="Please provide the order ID you want to cancel.",
-                success=False,
-                action_taken=None,
-                intent="cancel_order",
-                workflow_state="awaiting_missing_fields",
-                state_before=state_before,
-                state_after=state_after,
-                action_attempted="cancel_order",
-                action_result="awaiting_input",
-                guardrail_triggered=None,
-                extracted={},
-                missing_fields=["order_id"],
-                logs=logs + ["missing_fields=order_id"],
-            )
-
         state.pending_intent = "cancel_order"
         state.order_id = routed.order_id
         state.awaiting_confirmation = True
+
         state_after = state.to_dict()
 
+        logger.info(f"AGENT | intent=cancel_order | state=awaiting_confirmation")
+
         return AgentResponse(
-            response=(
-                f"You're about to cancel order {routed.order_id}.\n\n"
-                "Reply 'yes' to confirm or 'no' to keep the order."
-            ),
+            response=f"You're about to cancel order {routed.order_id}. Reply 'yes' to confirm.",
             success=True,
-            action_taken=None,
             intent="cancel_order",
             workflow_state="awaiting_confirmation",
             state_before=state_before,
             state_after=state_after,
-            action_attempted="cancel_order",
             action_result="pending_confirmation",
-            guardrail_triggered=None,
             extracted={"order_id": routed.order_id},
-            logs=logs + ["state_updated=awaiting_cancel_confirmation"],
+            logs=logs,
         )
 
-    # Request refund
-    if routed.intent == "request_refund":
-        state.pending_intent = "request_refund"
-        state.order_id = routed.order_id
-        state.reason = routed.reason
-
-        missing_fields: list[str] = []
-        if not state.order_id:
-            missing_fields.append("order_id")
-        if not state.reason:
-            missing_fields.append("reason")
-
-        if missing_fields:
-            state_after = state.to_dict()
-            log_kv(logs, "missing_fields", ",".join(missing_fields))
-
-            return AgentResponse(
-                response="To request a refund, I need your order ID and the reason for the refund."
-                if len(missing_fields) == 2
-                else f"I just need one more thing: {missing_fields[0]}.",
-                success=False,
-                action_taken=None,
-                intent="request_refund",
-                workflow_state="awaiting_missing_fields",
-                state_before=state_before,
-                state_after=state_after,
-                action_attempted="request_refund",
-                action_result="awaiting_input",
-                guardrail_triggered=None,
-                extracted={
-                    "order_id": state.order_id,
-                    "reason": state.reason,
-                },
-                missing_fields=missing_fields,
-                logs=logs,
-            )
-
-        result = request_refund(state.order_id, state.reason, db)
-        guardrail = map_guardrail(result["message"])
-
-        completed_order_id = state.order_id
-        completed_reason = state.reason
-
-        clear_state(user_id)
-        state_after = snapshot_state(get_or_create_state(user_id))
-
-        return AgentResponse(
-            response=result["message"],
-            success=result["success"],
-            action_taken="request_refund" if result["success"] else None,
-            intent="request_refund",
-            workflow_state="action_completed" if result["success"] else "action_blocked",
-            state_before=state_before,
-            state_after=state_after,
-            action_attempted="request_refund",
-            action_result="completed" if result["success"] else "blocked",
-            guardrail_triggered=guardrail,
-            extracted={
-                "order_id": completed_order_id,
-                "reason": completed_reason,
-            },
-            logs=logs + [
-                "tool_called=request_refund",
-                f"tool_success={str(result['success']).lower()}",
-            ],
-        )
-
-    # Fallback
+    # fallback
     state_after = state.to_dict()
+
+    logger.info("AGENT | fallback triggered")
+
     return AgentResponse(
-        response="Something went wrong while processing your request. Please try again.",
+        response="Something went wrong.",
         success=False,
-        action_taken=None,
-        intent=None,
         workflow_state="unable_to_route",
         state_before=state_before,
         state_after=state_after,
-        action_attempted=None,
         action_result="not_attempted",
-        guardrail_triggered=None,
         extracted={},
-        logs=logs + ["routing_fell_through=true"],
+        logs=logs,
     )

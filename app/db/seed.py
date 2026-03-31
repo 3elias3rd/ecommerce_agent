@@ -48,5 +48,27 @@ def seed_data():
     finally:
         db.close()
 
+# app/db/seed_orders.py
+from app.db.database import SessionLocal
+from app.db.models import Order
+
+def seed():
+    db = SessionLocal()
+
+    orders = [
+        Order(id="ORD-2001", user_id="user_1", status="pending", amount=25.99, item_name="Phone Case"),
+        Order(id="ORD-2002", user_id="user_1", status="shipped", amount=199.99, item_name="Headphones"),
+        Order(id="ORD-2003", user_id="user_2", status="delivered", amount=75.50, item_name="Keyboard"),
+        Order(id="ORD-2004", user_id="user_3", status="cancelled", amount=15.00, item_name="Mouse Pad"),
+    ]
+
+    for order in orders:
+        db.merge(order)  # prevents duplicates
+
+    db.commit()
+    db.close()
+
+
 if __name__ == "__main__":
-    seed_data()
+    seed()
+
