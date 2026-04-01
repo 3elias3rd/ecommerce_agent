@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./orders.db"
@@ -10,3 +11,6 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+STATE_TTL  = int(os.getenv("STATE_TTL", 3600))

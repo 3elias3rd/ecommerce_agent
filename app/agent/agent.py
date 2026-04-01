@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.router import extract_order_id, extract_reason, route_message
 from app.agent.schemas import AgentResponse, RoutedIntent
-from app.agent.state import clear_state, get_or_create_state
+from app.agent.state import clear_state, get_or_create_state, save_state
 from app.tools.orders import cancel_order, get_order, request_refund
 
 import logging
@@ -196,10 +196,12 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
         if extracted_order_id and not state.order_id:
             state.order_id = extracted_order_id
+            save_state(state)
             log_kv(logs, "state_order_id_filled", extracted_order_id)
 
         if extracted_reason and not state.reason:
             state.reason = extracted_reason
+            save_state(state)
             log_kv(logs, "state_reason_filled", True)
 
         missing_fields: list[str] = []
@@ -419,6 +421,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state.pending_intent = "cancel_order"
         state.order_id = routed.order_id
         state.awaiting_confirmation = True
+        save_state(state)
         state_after = state.to_dict()
 
         return AgentResponse(
@@ -444,6 +447,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state.pending_intent = "request_refund"
         state.order_id = routed.order_id
         state.reason = routed.reason
+        save_state(state)
 
         missing_fields: list[str] = []
         if not state.order_id:
