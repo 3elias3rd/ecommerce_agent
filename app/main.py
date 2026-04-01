@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from contextlib import asynccontextmanager
 
@@ -18,4 +20,13 @@ app = FastAPI(
     title = "E-commerce Order Operations Agent",
     )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(router)
+
+app.mount("/", StaticFiles(directory="app/templates", html=True), name="frontend")

@@ -1,12 +1,12 @@
 from sqlalchemy.orm import Session
 
 from app.agent.router import extract_order_id, extract_reason, route_message
-
 from app.agent.schemas import AgentResponse, RoutedIntent
 from app.agent.state import clear_state, get_or_create_state
 from app.tools.orders import cancel_order, get_order, request_refund
 
 import logging
+
 
 def snapshot_state(state) -> dict:
     return {
@@ -43,8 +43,10 @@ def normalize_route_result(route_result) -> tuple[RoutedIntent, str]:
         return route_result
     return route_result, "rule"
 
+
 logger = logging.getLogger("agent")
 logger.setLevel(logging.INFO)
+
 
 def handle_agent_message(user_id: str, message: str, db: Session) -> AgentResponse:
     logs: list[str] = []
@@ -56,13 +58,18 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
     log_kv(logs, "message_received", text)
 
+    # ──────────────────────────────────────────
     # 1) Awaiting confirmation
+    # ──────────────────────────────────────────
     if state.awaiting_confirmation:
         log_kv(logs, "workflow_state", "awaiting_confirmation")
 
+        # FIX: capture pending_order_id here, before any branching,
+        # so it's available in the "no" and ambiguous response paths too.
+        pending_order_id = state.order_id
+
         if lowered in {"yes", "confirm", "please do", "go ahead"}:
-            if state.pending_intent == "cancel_order" and state.order_id:
-                pending_order_id = state.order_id
+            if state.pending_intent == "cancel_order" and pending_order_id:
                 result = cancel_order(pending_order_id, db)
                 guardrail = map_guardrail(result["message"])
 
@@ -70,11 +77,14 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
                 state_after = state.to_dict()
 
                 logger.info(
-                    f"AGENT | intent=cancel_order | state={ 'action_completed' if result['success'] else 'action_blocked' } "
-                    f"| action=cancel_order | result={ 'completed' if result['success'] else 'blocked' } "
-                    f"| guardrail={guardrail} | order_id={pending_order_id}"
+                    f"AGENT | intent=cancel_order"
+                    f" | state={'action_completed' if result['success'] else 'action_blocked'}"
+                    f" | action=cancel_order"
+                    f" | result={'completed' if result['success'] else 'blocked'}"
+                    f" | guardrail={guardrail}"
+                    f" | order_id={pending_order_id}"
                 )
-                
+
                 return AgentResponse(
                     response=result["message"],
                     success=result["success"],
@@ -94,16 +104,18 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
                     ],
                 )
 
+            # Confirmed but no valid pending action
             clear_state(user_id)
             state_after = state.to_dict()
 
             logger.info(
-                    logger.info(
-                    f"AGENT | intent=cancel_order "
-                    f"| action=None | result={ 'None' } "
-                    f"| guardrail=None | order_id={pending_order_id}"
-                )
-                )
+                f"AGENT | intent=unknown"
+                f" | action=None"
+                f" | result=None"
+                f" | guardrail=None"
+                f" | order_id={pending_order_id}"
+            )
+
             return AgentResponse(
                 response="Confirmation was received, but no valid pending action was found.",
                 success=False,
@@ -124,13 +136,16 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_after = state.to_dict()
 
             logger.info(
-                    f"AGENT | intent=cancel_order | state={ 'action_blocked' } "
-                    f"| action=cancel_order | result={ 'blocked' } "
-                    f"| guardrail=None | order_id={pending_order_id}"
-                )
+                f"AGENT | intent=cancel_order"
+                f" | state=confirmation_declined"
+                f" | action=cancel_order"
+                f" | result=declined"
+                f" | guardrail=None"
+                f" | order_id={pending_order_id}"
+            )
+
             return AgentResponse(
-                response="No problem — your order has not been cancelled.\n\n" \
-                "I did not take any action.",
+                response="No problem — your order has not been cancelled.\n\nI did not take any action.",
                 success=True,
                 action_taken=None,
                 intent="cancel_order",
@@ -144,30 +159,35 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
                 logs=logs + ["confirmation.declined"],
             )
 
+        # Ambiguous response while awaiting confirmation
         state_after = state.to_dict()
 
         logger.info(
-                    f"AGENT | intent=cancel_order | state={ 'awaiting_confirmation' } "
-                    f"| action=None "
-                    f"| guardrail=None | order_id={pending_order_id}"
-                )
+            f"AGENT | intent={state.pending_intent}"
+            f" | state=awaiting_confirmation"
+            f" | action=None"
+            f" | guardrail=None"
+            f" | order_id={pending_order_id}"
+        )
 
         return AgentResponse(
             response='Please reply with "yes" to confirm or "no" to cancel the action.',
             success=False,
             action_taken=None,
             intent=state.pending_intent,
-            workflow_state="confirmation_invalid",
+            workflow_state="awaiting_confirmation",
             state_before=state_before,
             state_after=state_after,
             action_attempted=state.pending_intent,
             action_result="awaiting_input",
             guardrail_triggered=None,
-            extracted={"order_id": state.order_id},
+            extracted={"order_id": pending_order_id},
             logs=logs + ["confirmation.invalid_response"],
         )
 
-    # 2) Pending refund slot filling
+    # ──────────────────────────────────────────
+    # 2) Pending refund — slot filling
+    # ──────────────────────────────────────────
     if state.pending_intent == "request_refund":
         log_kv(logs, "workflow_state", "pending_refund")
 
@@ -193,15 +213,19 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             log_kv(logs, "missing_fields", ",".join(missing_fields))
 
             logger.info(
-                    f"AGENT | intent=refund_request | state={ 'reson' } "
-                    f"| action=None "
-                    f"| guardrail=None | order_id={state.order_id} " 
-                )
-            
+                f"AGENT | intent=request_refund"
+                f" | state=awaiting_missing_fields"
+                f" | action=None"
+                f" | guardrail=None"
+                f" | order_id={state.order_id}"
+            )
+
             return AgentResponse(
-                response="To request a refund, I need your order ID and the reason for the refund."
-                if len(missing_fields) == 2
-                else f"I just need one more thing: {missing_fields[0]}.",
+                response=(
+                    "To request a refund, I need your order ID and the reason for the refund."
+                    if len(missing_fields) == 2
+                    else f"I just need one more thing: {missing_fields[0]}."
+                ),
                 success=False,
                 action_taken=None,
                 intent="request_refund",
@@ -229,11 +253,14 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state_after = state.to_dict()
 
         logger.info(
-                    f"AGENT | intent=request_refund | state={ 'action_completed' if result['success'] else 'action_blocked' } "
-                    f"| action=request_refund | result={ 'completed' if result['success'] else 'blocked' } "
-                    f"| guardrail={guardrail} | order_id={completed_order_id}"
-                )
-        
+            f"AGENT | intent=request_refund"
+            f" | state={'action_completed' if result['success'] else 'action_blocked'}"
+            f" | action=request_refund"
+            f" | result={'completed' if result['success'] else 'blocked'}"
+            f" | guardrail={guardrail}"
+            f" | order_id={completed_order_id}"
+        )
+
         return AgentResponse(
             response=result["message"],
             success=result["success"],
@@ -255,7 +282,9 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             ],
         )
 
+    # ──────────────────────────────────────────
     # 3) Fresh routing
+    # ──────────────────────────────────────────
     route_result = route_message(text)
     routed, routing_source = normalize_route_result(route_result)
 
@@ -264,14 +293,14 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
     log_kv(logs, "order_id", routed.order_id)
     log_kv(logs, "reason_present", str(routed.reason is not None).lower())
 
-    # Unknown intent
+    # ── Unknown intent ──
     if routed.intent == "unknown":
         state_after = state.to_dict()
+
         logger.info(
-                    f"AGENT | intent=Unknown | state={ 'pending_intent' } "
-                    f"| action=None "
-                    f"| guardrail=None "
-                )
+            "AGENT | intent=unknown | state=unable_to_route | action=None | guardrail=None"
+        )
+
         return AgentResponse(
             response=(
                 "I can help with:\n"
@@ -296,7 +325,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             logs=logs,
         )
 
-    # Get order
+    # ── Get order ──
     if routed.intent == "get_order":
         if not routed.order_id:
             state_after = state.to_dict()
@@ -367,7 +396,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             ],
         )
 
-    # Cancel order
+    # ── Cancel order ──
     if routed.intent == "cancel_order":
         if not routed.order_id:
             state_after = state.to_dict()
@@ -410,7 +439,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             logs=logs + ["state_updated=awaiting_cancel_confirmation"],
         )
 
-    # Request refund
+    # ── Request refund ──
     if routed.intent == "request_refund":
         state.pending_intent = "request_refund"
         state.order_id = routed.order_id
@@ -427,9 +456,11 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             log_kv(logs, "missing_fields", ",".join(missing_fields))
 
             return AgentResponse(
-                response="To request a refund, I need your order ID and the reason for the refund."
-                if len(missing_fields) == 2
-                else f"I just need one more thing: {missing_fields[0]}.",
+                response=(
+                    "To request a refund, I need your order ID and the reason for the refund."
+                    if len(missing_fields) == 2
+                    else f"I just need one more thing: {missing_fields[0]}."
+                ),
                 success=False,
                 action_taken=None,
                 intent="request_refund",
@@ -456,6 +487,15 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         clear_state(user_id)
         state_after = state.to_dict()
 
+        logger.info(
+            f"AGENT | intent=request_refund"
+            f" | state={'action_completed' if result['success'] else 'action_blocked'}"
+            f" | action=request_refund"
+            f" | result={'completed' if result['success'] else 'blocked'}"
+            f" | guardrail={guardrail}"
+            f" | order_id={completed_order_id}"
+        )
+
         return AgentResponse(
             response=result["message"],
             success=result["success"],
@@ -477,7 +517,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             ],
         )
 
-    # Fallback
+    # ── Fallback ──
     state_after = state.to_dict()
     return AgentResponse(
         response="Something went wrong while processing your request. Please try again.",
