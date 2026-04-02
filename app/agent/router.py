@@ -1,6 +1,8 @@
 import re
 from app.agent.schemas import RoutedIntent
+from app.utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 ORDER_ID_PATTERN = r"\bORD-\d{4,}\b"
 
@@ -27,9 +29,9 @@ def extract_reason(text: str) -> str | None:
     return None
 
 
-def route_message(message: str) -> RoutedIntent:
-    text = message.strip()
-    lowered = text.lower()
+def route_message(message: str) -> tuple[RoutedIntent, str] | RoutedIntent:
+    text     = message.strip()
+    lowered  = text.lower()
     order_id = extract_order_id(text)
 
     # ── Order status / lookup ──
@@ -39,27 +41,44 @@ def route_message(message: str) -> RoutedIntent:
         "check order", "check my order",
         "look up", "lookup",
     ]):
-        return RoutedIntent(intent="get_order", order_id=order_id)
+        result = RoutedIntent(intent="get_order", order_id=order_id)
 
     # ── Cancellation ──
-    if "cancel" in lowered:
-        return RoutedIntent(
+    elif "cancel" in lowered:
+        result = RoutedIntent(
             intent="cancel_order",
             order_id=order_id,
             need_confirmation=True,
         )
 
     # ── Refund ──
-    if "refund" in lowered:
-        reason = extract_reason(text)
-        return RoutedIntent(
+    elif "refund" in lowered:
+        result = RoutedIntent(
             intent="request_refund",
             order_id=order_id,
-            reason=reason,
+            reason=extract_reason(text),
         )
 
-    # ── Bare order ID (e.g. user types "ORD-1002") ──
-    if order_id:
-        return RoutedIntent(intent="get_order", order_id=order_id)
+    # ── Bare order ID ──
+    elif order_id:
+        result = RoutedIntent(intent="get_order", order_id=order_id)
 
-    return RoutedIntent(intent="unknown")
+    # ── Unknown — escalate to LLM ──
+    else:
+        # Imported here to avoid circular imports and to prevent the
+        # OpenAI client from initialising on every module load
+        from app.utils.llm_router import llm_route_message
+
+        logger.info(
+            f"ROUTER | source=rule | rule_based=no_match"
+            f" | input={text[:60]!r} | escalating=llm"
+        )
+        return llm_route_message(text)
+
+    logger.info(
+        f"ROUTER | source=rule"
+        f" | input={text[:60]!r}"
+        f" | intent={result.intent}"
+        f" | order_id={result.order_id}"
+    )
+    return result
