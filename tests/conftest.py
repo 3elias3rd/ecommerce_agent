@@ -7,15 +7,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker 
 
-from app.agent.state import clear_state, conversation_store
+from app.agent.state import clear_state
 from app.db.database import Base, get_db
 from app.db.models import Order, OrderStatus
 from app.main import app
-
-
-@pytest.fixture(autouse=True)
-def reset_agent_state():
-    conversation_store.clear()
 
 
 @pytest.fixture
@@ -61,6 +56,13 @@ def seeded_db(test_db):
             user_id="user_1",
             status=OrderStatus.SHIPPED.value,
             amount=129.99,
+            item_name="Mechanical Keyboard",
+        ),
+        Order(
+            id="ORD-1005",
+            user_id="user_1",
+            status=OrderStatus.PENDING.value,
+            amount=99.99,
             item_name="Mechanical Keyboard",
         ),
         Order(

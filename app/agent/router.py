@@ -1,5 +1,8 @@
 import re
 from app.agent.schemas import RoutedIntent
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 ORDER_ID_PATTERN = r"\bORD-\d{4,}\b"
@@ -32,34 +35,33 @@ def route_message(message: str) -> RoutedIntent:
     lowered = text.lower()
     order_id = extract_order_id(text)
 
-    # ── Order status / lookup ──
     if any(phrase in lowered for phrase in [
         "where is my order", "track my order",
         "order status", "where's my order",
         "check order", "check my order",
         "look up", "lookup",
     ]):
-        return RoutedIntent(intent="get_order", order_id=order_id)
+        result = RoutedIntent(intent="get_order", order_id=order_id)
 
-    # ── Cancellation ──
-    if "cancel" in lowered:
-        return RoutedIntent(
+    elif "cancel" in lowered:
+        result = RoutedIntent(
             intent="cancel_order",
             order_id=order_id,
             need_confirmation=True,
         )
 
-    # ── Refund ──
-    if "refund" in lowered:
-        reason = extract_reason(text)
-        return RoutedIntent(
+    elif "refund" in lowered:
+        result = RoutedIntent(
             intent="request_refund",
             order_id=order_id,
-            reason=reason,
+            reason=extract_reason(text),
         )
 
-    # ── Bare order ID (e.g. user types "ORD-1002") ──
-    if order_id:
-        return RoutedIntent(intent="get_order", order_id=order_id)
+    elif order_id:
+        result = RoutedIntent(intent="get_order", order_id=order_id)
 
-    return RoutedIntent(intent="unknown")
+    else:
+        result = RoutedIntent(intent="unknown")
+
+    logger.info(f"ROUTER | input={text[:60]!r} | intent={result.intent} | order_id={result.order_id}")
+    return result

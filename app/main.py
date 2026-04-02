@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 
 from app.api.routes import router
 from app.db.database import Base, engine
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -19,6 +22,8 @@ app = FastAPI(
     lifespan = lifespan,
     title = "E-commerce Order Operations Agent",
     )
+
+logger.info("APP | started | env=development")
 
 app.add_middleware(
     CORSMiddleware,

@@ -6,8 +6,9 @@ from typing import Optional
 import redis
 
 from app.utils.config import REDIS_URL, STATE_TTL
+from app.utils.logger import get_logger
 
-logger = logging.getLogger("state")
+logger = get_logger(__name__)
 
 # ── Redis client (module-level, connection pooled) ──
 try:

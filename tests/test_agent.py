@@ -30,7 +30,7 @@ class TestAgentCancelFlow:
     def test_cancel_confirmation_executes_action(self, seeded_db):
         first =handle_agent_message(
             user_id="user_1",
-            message="Cancel my order ORD-1001",
+            message="Cancel my order ORD-1005",
             db=seeded_db,
         )
         second = handle_agent_message(
@@ -40,6 +40,8 @@ class TestAgentCancelFlow:
         )
 
         assert first.success is True
+        assert first.action_taken == None
+        assert first.workflow_state == "awaiting_confirmation"
         assert second.success is True
         assert second.action_taken == "cancel_order"
         assert "cancelled" in second.response.lower()
