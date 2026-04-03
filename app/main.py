@@ -1,29 +1,47 @@
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 from app.api.routes import router
-from app.db.database import Base, engine
+from app.api.auth_routes import router as auth_router
 from app.utils.logger import get_logger
+from app.utils.rate_limiter import limiter
 
 logger = get_logger(__name__)
 
 
+# ── Startup seeder ────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    from app.db.database import SessionLocal
+    from app.db.models import Order
+    from app.db.seed import seed
 
-    yield
+    db = SessionLocal()
+    try:
+        count = db.query(Order).count()
+        if count == 0:
+            logger.info("APP | startup | db_empty=true | seeding")
+            seed()
+        else:
+            logger.info(f"APP | startup | db_empty=false | orders={count} | skipping_seed")
+    except Exception as e:
+        logger.warning(f"APP | startup | seed_check_failed | reason={e}")
+    finally:
+        db.close()
+
+    yield  # app runs here
 
 
-app = FastAPI(
-    lifespan = lifespan,
-    title = "E-commerce Order Operations Agent",
-    )
+# ── App ───────────────────────────────────────────────────────
+app = FastAPI(title="Order Ops Agent", lifespan=lifespan)
 
-logger.info("APP | started | env=development")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +50,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router)
+# ── Routers ───────────────────────────────────────────────────
+app.include_router(auth_router)  # /auth/login  — public
+app.include_router(router)       # all other routes — protected
 
-app.mount("/", StaticFiles(directory="app/templates", html=True), name="frontend")
+# ── Frontend — must be last ───────────────────────────────────
+app.mount("/", StaticFiles(directory="app/frontend", html=True), name="frontend")
+
+logger.info("APP | started | routers=registered")

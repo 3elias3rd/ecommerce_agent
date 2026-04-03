@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Order Ops Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#0d0f0f;--surface:#141717;--border:#1f2424;--border-lit:#2e3535;
+      --text:#d4dada;--muted:#5a6868;--accent:#00c896;--accent-dim:#00c89222;
+      --user-bg:#111515;--agent-bg:#0f1414;--danger:#e05555;--warn:#e0a855;--info:#55aaee;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+    #login-screen{flex:1;display:flex;align-items:center;justify-content:center}
+    .login-box{border:1px solid var(--border-lit);background:var(--surface);padding:40px;width:360px;animation:fadeUp .25s ease both}
+    .login-logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+    .login-mark{width:32px;height:32px;border:1.5px solid var(--accent);display:grid;place-items:center;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent)}
+    .login-title{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--text);letter-spacing:.04em}
+    .login-sub{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+    .field{margin-bottom:16px}
+    .field label{display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+    .field input{width:100%;background:var(--bg);border:1px solid var(--border-lit);color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:14px;padding:10px 12px;outline:none;transition:border-color .2s}
+    .field input:focus{border-color:var(--accent)}
+    .field input::placeholder{color:var(--muted)}
+    .login-error{font-size:12px;color:var(--danger);margin-bottom:16px;min-height:18px;font-family:'IBM Plex Mono',monospace}
+    #login-btn{width:100%;background:var(--accent);border:none;color:#000;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.08em;padding:12px;cursor:pointer;text-transform:uppercase;transition:opacity .2s}
+    #login-btn:hover{opacity:.85}
+    #login-btn:disabled{opacity:.4;cursor:not-allowed}
+    #app-shell{display:none;flex-direction:column;flex:1;overflow:hidden}
+    #app-shell.visible{display:flex}
+    header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+    .header-left{display:flex;align-items:center;gap:12px}
+    .logo-mark{width:28px;height:28px;border:1.5px solid var(--accent);display:grid;place-items:center;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent)}
+    .header-title{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500;color:var(--text);letter-spacing:.04em}
+    .header-sub{font-size:11px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+    .header-right{display:flex;align-items:center;gap:16px}
+    .logged-in-as{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)}
+    .logged-in-as span{color:var(--accent)}
+    .logout-btn{background:none;border:1px solid var(--border-lit);color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:5px 10px;cursor:pointer;text-transform:uppercase;letter-spacing:.05em;transition:border-color .2s,color .2s}
+    .logout-btn:hover{border-color:var(--danger);color:var(--danger)}
+    .status-pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace}
+    .status-dot{width:6px;height:6px;border-radius:50%;background:var(--muted);transition:background .3s}
+    .status-dot.online{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+    .user-selector{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace}
+    .user-selector label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+    .user-selector select{background:var(--bg);border:1px solid var(--border-lit);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:12px;padding:4px 8px;outline:none;cursor:pointer;transition:border-color .2s}
+    .user-selector select:focus{border-color:var(--accent)}
+    .main{display:flex;flex:1;overflow:hidden}
+    .sidebar{width:260px;flex-shrink:0;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+    .sidebar-section{padding:16px;border-bottom:1px solid var(--border);flex-shrink:0}
+    .sidebar-label{font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:12px}
+    .orders-scroll{flex:1;overflow-y:auto;padding:16px}
+    .orders-scroll::-webkit-scrollbar{width:3px}
+    .orders-scroll::-webkit-scrollbar-thumb{background:var(--border-lit)}
+    .order-card{border:1px solid var(--border);padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:border-color .2s,background .2s}
+    .order-card:hover{border-color:var(--accent);background:var(--accent-dim)}
+    .order-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+    .order-id{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent);font-weight:500}
+    .status-badge{font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:1px 6px;border:1px solid}
+    .status-badge.pending{color:var(--warn);border-color:var(--warn)}
+    .status-badge.shipped{color:var(--info);border-color:var(--info)}
+    .status-badge.delivered{color:var(--accent);border-color:var(--accent)}
+    .status-badge.cancelled{color:var(--danger);border-color:var(--danger)}
+    .status-badge.refunded{color:var(--muted);border-color:var(--muted)}
+    .order-item{font-size:12px;color:var(--text);margin-bottom:3px}
+    .order-hint{font-size:11px;color:var(--muted);line-height:1.4}
+    .phrase-btn{display:block;width:100%;text-align:left;background:none;border:1px solid var(--border);color:var(--muted);font-family:'IBM Plex Sans',sans-serif;font-size:12px;padding:8px 10px;cursor:pointer;margin-bottom:6px;transition:border-color .2s,color .2s,background .2s;line-height:1.4}
+    .phrase-btn:hover{border-color:var(--accent);color:var(--text);background:var(--accent-dim)}
+    .chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .messages{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px;scroll-behavior:smooth}
+    .messages::-webkit-scrollbar{width:4px}
+    .messages::-webkit-scrollbar-thumb{background:var(--border-lit)}
+    .welcome-card{border:1px solid var(--border-lit);background:var(--surface);padding:24px;max-width:520px;animation:fadeUp .3s ease both}
+    .welcome-title{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--accent);letter-spacing:.05em;margin-bottom:10px}
+    .welcome-body{font-size:13px;color:var(--text);line-height:1.7;margin-bottom:16px}
+    .welcome-body strong{color:var(--accent);font-weight:500}
+    .welcome-actions{display:flex;flex-direction:column;gap:6px}
+    .welcome-action-btn{background:none;border:1px solid var(--border-lit);color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:12px;padding:8px 12px;cursor:pointer;text-align:left;transition:border-color .2s,background .2s}
+    .welcome-action-btn:hover{border-color:var(--accent);background:var(--accent-dim)}
+    .welcome-action-btn .action-label{font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:block;margin-bottom:2px}
+    .msg{display:flex;flex-direction:column;gap:4px;animation:fadeUp .2s ease both}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    .msg-meta{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+    .msg-bubble{padding:12px 16px;border:1px solid var(--border);line-height:1.6;max-width:680px;white-space:pre-wrap}
+    .msg.user .msg-bubble{background:var(--user-bg);border-color:var(--border-lit);align-self:flex-end;border-right:2px solid var(--accent)}
+    .msg.user .msg-meta{align-self:flex-end}
+    .msg.agent .msg-bubble{background:var(--agent-bg);border-left:2px solid var(--accent)}
+    .msg.error .msg-bubble{border-left:2px solid var(--danger);color:var(--danger)}
+    .intent-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.07em;padding:2px 7px;border:1px solid var(--border-lit);color:var(--muted);margin-top:4px}
+    .intent-badge.guardrail{border-color:var(--danger);color:var(--danger)}
+    .intent-badge.success{border-color:var(--accent);color:var(--accent)}
+    .intent-badge.pending{border-color:var(--warn);color:var(--warn)}
+    .typing{display:none;align-items:center;gap:5px;padding:12px 16px;border:1px solid var(--border);border-left:2px solid var(--accent);background:var(--agent-bg);width:fit-content}
+    .typing.visible{display:flex}
+    .typing span{width:5px;height:5px;border-radius:50%;background:var(--muted);animation:blink 1.2s infinite}
+    .typing span:nth-child(2){animation-delay:.2s}
+    .typing span:nth-child(3){animation-delay:.4s}
+    @keyframes blink{0%,80%,100%{opacity:.2;transform:scale(.9)}40%{opacity:1;transform:scale(1.1)}}
+    .input-bar{padding:16px 24px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:10px;align-items:flex-end;flex-shrink:0}
+    .input-wrap{flex:1;border:1px solid var(--border-lit);background:var(--bg);display:flex;align-items:center;transition:border-color .2s}
+    .input-wrap:focus-within{border-color:var(--accent)}
+    #user-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:14px;padding:12px 14px;resize:none;line-height:1.5;max-height:120px;overflow-y:auto}
+    #user-input::placeholder{color:var(--muted)}
+    #send-btn{background:var(--accent);border:none;color:#000;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.06em;padding:12px 20px;cursor:pointer;text-transform:uppercase;transition:opacity .2s;align-self:stretch}
+    #send-btn:hover{opacity:.85}
+    #send-btn:disabled{opacity:.3;cursor:not-allowed}
+    .reset-btn{background:none;border:1px solid var(--border-lit);color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:10px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.05em;transition:border-color .2s,color .2s}
+    .reset-btn:hover{border-color:var(--danger);color:var(--danger)}
+  </style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-mark">OA</div>
+      <div>
+        <div class="login-title">Order Ops Agent</div>
+        <div class="login-sub">Test Console</div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="login-username">Username</label>
+      <input type="text" id="login-username" placeholder="Enter username" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label for="login-password">Password</label>
+      <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" />
+    </div>
+    <div class="login-error" id="login-error"></div>
+    <button id="login-btn" onclick="doLogin()">Sign In</button>
+  </div>
+</div>
+
+<div id="app-shell">
+  <header>
+    <div class="header-left">
+      <div class="logo-mark">OA</div>
+      <div>
+        <div class="header-title">Order Operations Agent</div>
+        <div class="header-sub">Test Console</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="logged-in-as">signed in as <span id="username-display">—</span></div>
+      <div class="user-selector">
+        <label>Testing as</label>
+        <select id="user-select">
+          <option value="user_1">user_1</option>
+          <option value="user_2">user_2</option>
+          <option value="user_3">user_3</option>
+          <option value="user_4">user_4</option>
+          <option value="user_5">user_5</option>
+        </select>
+      </div>
+      <div class="status-pill">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">connecting</span>
+      </div>
+      <button class="logout-btn" onclick="doLogout()">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Try saying</div>
+        <button class="phrase-btn" onclick="quickSend('Check my order ORD-2001')">"Check my order ORD-2001"</button>
+        <button class="phrase-btn" onclick="quickSend('I want to cancel my order')">"I want to cancel my order"</button>
+        <button class="phrase-btn" onclick="quickSend('I would like a refund')">"I would like a refund"</button>
+      </div>
+      <div class="sidebar-label" style="padding:16px 16px 8px">Test Orders</div>
+      <div class="orders-scroll" id="orders-panel"></div>
+    </aside>
+
+    <div class="chat-area">
+      <div class="messages" id="messages">
+        <div class="welcome-card" id="welcome-card">
+          <div class="welcome-title">// Welcome to the Order Agent</div>
+          <div class="welcome-body">
+            This agent can help you with your orders. You can:<br><br>
+            <strong>Check</strong> the status of an order<br>
+            <strong>Cancel</strong> a pending order<br>
+            <strong>Request a refund</strong> on a delivered order<br><br>
+            Pick an order from the sidebar or try one of the examples below.
+          </div>
+          <div class="welcome-actions">
+            <button class="welcome-action-btn" onclick="quickSend('What is the status of ORD-2001')">
+              <span class="action-label">Check an order</span>"What is the status of ORD-2001?"
+            </button>
+            <button class="welcome-action-btn" onclick="quickSend('I want to cancel ORD-2001')">
+              <span class="action-label">Cancel an order</span>"I want to cancel ORD-2001"
+            </button>
+            <button class="welcome-action-btn" onclick="quickSend('I need a refund for ORD-2005 because it arrived damaged')">
+              <span class="action-label">Request a refund</span>"I need a refund for ORD-2005 because it arrived damaged"
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="input-bar">
+        <div class="input-wrap">
+          <textarea id="user-input" rows="1" placeholder="Type a message or click an order in the sidebar..."></textarea>
+        </div>
+        <button class="reset-btn" onclick="resetSession()">↺ Reset</button>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE='';
+let _token=null,_username=null;
+
+const ORDER_DATA={
+  user_1:[
+    {id:'ORD-2001',status:'pending',item:'Phone Case',amount:25.99,hint:'Try cancelling or check status'},
+    {id:'ORD-2002',status:'shipped',item:'Headphones',amount:199.99,hint:'Cancel is blocked — try it!'},
+    {id:'ORD-2005',status:'delivered',item:'Laptop Stand',amount:89.00,hint:'Eligible for a refund'},
+  ],
+  user_2:[
+    {id:'ORD-2003',status:'delivered',item:'Keyboard',amount:75.50,hint:'Eligible for a refund'},
+    {id:'ORD-2006',status:'pending',item:'Webcam',amount:129.99,hint:'Try cancelling'},
+    {id:'ORD-2007',status:'shipped',item:'USB Hub',amount:45.00,hint:'Cancel is blocked — try it!'},
+  ],
+  user_3:[
+    {id:'ORD-2004',status:'cancelled',item:'Mouse Pad',amount:15.00,hint:'Already cancelled — see what happens'},
+    {id:'ORD-2008',status:'pending',item:'Desk Lamp',amount:39.99,hint:'Try cancelling'},
+    {id:'ORD-2009',status:'delivered',item:'Monitor',amount:349.00,hint:'Eligible for a refund'},
+  ],
+  user_4:[
+    {id:'ORD-2010',status:'pending',item:'Mechanical Keyboard',amount:159.00,hint:'Try cancelling'},
+    {id:'ORD-2011',status:'refunded',item:'Cable Organizer',amount:19.99,hint:'Already refunded — try requesting again'},
+    {id:'ORD-2013',status:'delivered',item:'Standing Desk Mat',amount:220.00,hint:'Eligible for a refund'},
+  ],
+  user_5:[
+    {id:'ORD-2012',status:'pending',item:'Laptop Sleeve',amount:34.99,hint:'Try cancelling'},
+    {id:'ORD-2014',status:'delivered',item:'Standing Desk',amount:499.00,hint:'Eligible for a refund'},
+    {id:'ORD-2015',status:'shipped',item:'Monitor Arm',amount:59.99,hint:'Cancel is blocked — try it!'},
+  ],
+};
+
+async function doLogin(){
+  const username=document.getElementById('login-username').value.trim();
+  const password=document.getElementById('login-password').value;
+  const errorEl=document.getElementById('login-error');
+  const btn=document.getElementById('login-btn');
+  errorEl.textContent='';
+  if(!username||!password){errorEl.textContent='Please enter your username and password.';return;}
+  btn.disabled=true;btn.textContent='Signing in...';
+  try{
+    const res=await fetch(`${API_BASE}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+    const data=await res.json();
+    if(!res.ok){errorEl.textContent=data.detail||'Login failed. Please try again.';return;}
+    _token=data.access_token;_username=username;
+    document.getElementById('username-display').textContent=username;
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('app-shell').classList.add('visible');
+    document.getElementById('login-password').value='';
+    renderOrderPanel(document.getElementById('user-select').value);
+    checkHealth();
+  }catch{errorEl.textContent='⚠ Could not reach the server. Please try again.';}
+  finally{btn.disabled=false;btn.textContent='Sign In';}
+}
+
+['login-username','login-password'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+});
+
+function doLogout(){
+  _token=null;_username=null;
+  document.getElementById('app-shell').classList.remove('visible');
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('login-username').value='';
+  document.getElementById('login-error').textContent='';
+  clearChat();
+}
+
+async function authFetch(url,options={}){
+  const res=await fetch(url,{...options,headers:{'Content-Type':'application/json','Authorization':`Bearer ${_token}`,...(options.headers||{})}});
+  if(res.status===401){doLogout();throw new Error('auth:expired');}
+  return res;
+}
+
+function handleApiError(err,res){
+  // Network failure — fetch itself threw
+  if(!res) {
+    if(!navigator.onLine) return 'You appear to be offline. Please check your connection and try again.';
+    return 'We\'re having trouble reaching the server. Please try again in a moment.';
+  }
+  // HTTP error responses
+  if(res.status===500) return 'Something went wrong on our end. Please try again.';
+  if(res.status===422) return 'We couldn\'t process that request. Please try rephrasing.';
+  if(res.status===503) return 'The service is temporarily unavailable. Please try again shortly.';
+  return 'An unexpected error occurred. Please try again.';
+}
+
+async function checkHealth(){
+  try{const r=await fetch(`${API_BASE}/health`,{signal:AbortSignal.timeout(3000)});setStatus(r.ok);}
+  catch{setStatus(false);}
+}
+function setStatus(online){
+  document.getElementById('status-dot').className='status-dot'+(online?' online':'');
+  document.getElementById('status-text').textContent=online?'online':'offline';
+}
+setInterval(checkHealth,15000);
+
+function renderOrderPanel(userId){
+  const panel=document.getElementById('orders-panel');
+  const orders=ORDER_DATA[userId]||[];
+  panel.innerHTML='';
+  const group=document.createElement('div');
+  group.className='user-group';
+  orders.forEach(o=>{
+    const card=document.createElement('div');
+    card.className='order-card';
+    card.onclick=()=>pasteOrderId(o.id);
+    card.innerHTML=`<div class="order-card-top"><span class="order-id">${o.id}</span><span class="status-badge ${o.status}">${o.status}</span></div><div class="order-item">${o.item} · $${o.amount.toFixed(2)}</div><div class="order-hint">${o.hint}</div>`;
+    group.appendChild(card);
+  });
+  panel.appendChild(group);
+}
+
+function pasteOrderId(id){
+  const el=document.getElementById('user-input');
+  el.value=id;el.focus();
+  el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';
+}
+
+document.getElementById('user-select').addEventListener('change',e=>{renderOrderPanel(e.target.value);resetSession();});
+
+const inputEl=document.getElementById('user-input');
+inputEl.addEventListener('input',()=>{inputEl.style.height='auto';inputEl.style.height=Math.min(inputEl.scrollHeight,120)+'px';});
+inputEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}});
+
+async function sendMessage(){
+  const text=inputEl.value.trim();
+  if(!text||!_token)return;
+  const userId=document.getElementById('user-select').value;
+  const welcome=document.getElementById('welcome-card');
+  if(welcome&&welcome.parentNode)welcome.remove();
+  appendMessage('user',text);
+  inputEl.value='';inputEl.style.height='auto';
+  document.getElementById('send-btn').disabled=true;
+  const typing=appendTyping();
+  let res=null;
+  try{
+    res=await authFetch(`${API_BASE}/agent/chat`,{method:'POST',body:JSON.stringify({user_id:userId,message:text})});
+    if(!res.ok){typing.remove();appendMessage('error',handleApiError(null,res));return;}
+    const data=await res.json();typing.remove();
+    const intent=data.intent||null,guardrail=data.guardrail_triggered||false,ar=data.action_result||null;
+    let bc='';
+    if(guardrail)bc='guardrail';
+    else if(ar==='pending_confirmation')bc='pending';
+    else if(data.success)bc='success';
+    appendMessage('agent',data.response,intent,bc);
+  }catch(err){
+    typing.remove();
+    if(err.message==='auth:expired'){appendMessage('error','Your session has expired. Please sign in again.');return;}
+    appendMessage('error',handleApiError(err,res));
+  }
+  document.getElementById('send-btn').disabled=false;
+  scrollToBottom();
+}
+
+function quickSend(text){inputEl.value=text;sendMessage();}
+
+async function resetSession(){
+  if(!_token)return;
+  const userId=document.getElementById('user-select').value;
+  try{await authFetch(`${API_BASE}/agent/reset`,{method:'POST',body:JSON.stringify({user_id:userId,message:'_reset_'})});}
+  catch{}
+  clearChat();
+}
+
+function clearChat(){
+  const messages=document.getElementById('messages');
+  const welcome=document.getElementById('welcome-card');
+  messages.innerHTML='';
+  messages.appendChild(welcome);
+}
+
+function appendMessage(role,text,intent,badgeClass){
+  const wrap=document.createElement('div');wrap.className=`msg ${role}`;
+  const meta=document.createElement('div');meta.className='msg-meta';
+  meta.textContent=role==='user'?`${_username||'you'} · ${timestamp()}`:`agent · ${timestamp()}`;
+  const bubble=document.createElement('div');bubble.className='msg-bubble';bubble.textContent=text;
+  wrap.appendChild(meta);wrap.appendChild(bubble);
+  if(intent&&role==='agent'){
+    const badge=document.createElement('div');badge.className=`intent-badge ${badgeClass}`;badge.textContent=intent;
+    wrap.appendChild(badge);
+  }
+  document.getElementById('messages').appendChild(wrap);scrollToBottom();return wrap;
+}
+
+function appendTyping(){
+  const wrap=document.createElement('div');wrap.className='msg agent';
+  const t=document.createElement('div');t.className='typing visible';t.innerHTML='<span></span><span></span><span></span>';
+  wrap.appendChild(t);document.getElementById('messages').appendChild(wrap);scrollToBottom();return wrap;
+}
+
+function scrollToBottom(){const m=document.getElementById('messages');m.scrollTop=m.scrollHeight;}
+function timestamp(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+</script>
+</body>
+</html>
