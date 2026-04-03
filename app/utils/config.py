@@ -12,8 +12,13 @@ class Settings(BaseSettings):
     # ── OpenAI ─────────────────────────────────────────
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    router_timeout: int = 5          # seconds before LLM call is abandoned
-    router_temperature: float = 0.0  # deterministic — extraction only
+    router_timeout: int = 5
+    router_temperature: float = 0.0
+
+    # ── Auth ───────────────────────────────────────────
+    secret_key: str = "change-me-in-production"
+    access_token_expire_minutes: int = 480   # 8 hours
+    auth_users: str = ""                     # JSON: {"user": "bcrypt_hash"}
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -24,6 +29,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# ── Module-level aliases (used by state.py and llm_router.py) ──
+# ── Module-level aliases ───────────────────────────────────────
 REDIS_URL = settings.redis_url
-STATE_TTL = settings.state_ttl
+STATE_TTL  = settings.state_ttl
