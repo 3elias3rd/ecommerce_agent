@@ -10,6 +10,7 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 # ── Password hashing ───────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
@@ -20,23 +21,39 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-# ── User store (loaded from AUTH_USERS env var) ────────────────
+# ── User store ─────────────────────────────────────────────────
 
 def _load_users() -> dict[str, str]:
     """
-    Load users from AUTH_USERS env var.
-    Expected format: JSON string of {username: hashed_password}
-    e.g. {"tester1": "$2b$12$...", "tester2": "$2b$12$..."}
+    Load users from flat AUTH_USER_N / AUTH_PASS_N env var pairs.
+    This avoids JSON quote and $ character mangling on platforms like Koyeb.
+
+    Set in your environment:
+        AUTH_USER_1=tester1
+        AUTH_PASS_1=$2b$12$...
+        AUTH_USER_2=tester2
+        AUTH_PASS_2=$2b$12$...
     """
-    raw = settings.auth_users
-    if not raw:
-        logger.warning("AUTH | auth_users not set | no users will be able to login")
-        return {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.warning(f"AUTH | failed to parse auth_users | reason={e}")
-        return {}
+    users: dict[str, str] = {}
+
+    pairs = [
+        (settings.auth_user_1, settings.auth_pass_1),
+        (settings.auth_user_2, settings.auth_pass_2),
+        (settings.auth_user_3, settings.auth_pass_3),
+        (settings.auth_user_4, settings.auth_pass_4),
+        (settings.auth_user_5, settings.auth_pass_5),
+    ]
+
+    for username, hashed in pairs:
+        if username and hashed:
+            users[username] = hashed
+
+    if not users:
+        logger.warning("AUTH | no_users_loaded | check AUTH_USER_N and AUTH_PASS_N env vars")
+    else:
+        logger.info(f"AUTH | users_loaded | count={len(users)}")
+
+    return users
 
 
 # Load once at startup

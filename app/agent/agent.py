@@ -314,6 +314,68 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         )
 
     # ──────────────────────────────────────────
+    # 2b) Pending cancel — slot filling
+    # ──────────────────────────────────────────
+    if state.pending_intent == "cancel_order" and not state.awaiting_confirmation:
+        log_kv(logs, "workflow_state", "pending_cancel_slot_fill")
+
+        extracted_order_id = extract_order_id(text)
+
+        if extracted_order_id:
+            state.order_id = extracted_order_id
+            state.awaiting_confirmation = True
+            save_state(state)
+            state_after = state.to_dict()
+
+            logger.info(
+                f"AGENT | intent=cancel_order"
+                f" | state=awaiting_confirmation"
+                f" | order_id={extracted_order_id}"
+                f" | source=slot_fill"
+            )
+
+            return AgentResponse(
+                response=(
+                    f"You're about to cancel order {extracted_order_id}.\n\n"
+                    "Reply 'yes' to confirm or 'no' to keep the order."
+                ),
+                success=True,
+                action_taken=None,
+                intent="cancel_order",
+                workflow_state="awaiting_confirmation",
+                state_before=state_before,
+                state_after=state_after,
+                action_attempted="cancel_order",
+                action_result="pending_confirmation",
+                guardrail_triggered=None,
+                extracted={"order_id": extracted_order_id},
+                logs=logs + ["state_updated=awaiting_cancel_confirmation"],
+            )
+
+        # Still no order ID
+        state_after = state.to_dict()
+
+        logger.info(
+            "AGENT | intent=cancel_order | state=awaiting_missing_fields | missing=order_id"
+        )
+
+        return AgentResponse(
+            response="I still need the order ID to proceed. Please provide it (e.g. ORD-2001).",
+            success=False,
+            action_taken=None,
+            intent="cancel_order",
+            workflow_state="awaiting_missing_fields",
+            state_before=state_before,
+            state_after=state_after,
+            action_attempted="cancel_order",
+            action_result="awaiting_input",
+            guardrail_triggered=None,
+            extracted={},
+            missing_fields=["order_id"],
+            logs=logs + ["missing_fields=order_id", "slot_fill_attempt=no_id_found"],
+        )
+
+    # ──────────────────────────────────────────
     # 3) Fresh routing
     # ──────────────────────────────────────────
     route_result = route_message(text)
@@ -448,6 +510,10 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
     # ── Cancel order ──
     if routed.intent == "cancel_order":
         if not routed.order_id:
+            # Persist intent so the next reply (the order ID) is slot-filled
+            # into this flow rather than routed as a fresh get_order lookup
+            state.pending_intent = "cancel_order"
+            save_state(state)
             state_after = state.to_dict()
 
             logger.info(
