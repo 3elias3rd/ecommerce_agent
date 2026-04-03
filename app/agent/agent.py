@@ -273,6 +273,13 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state.reason = extracted_reason
             log_kv(logs, "state_reason_filled", True)
 
+        # If the agent already has the order_id and is only waiting for a reason,
+        # treat the entire message as the reason — the user is just stating it
+        # directly without any signal words (e.g. "wrong item sent")
+        if not state.reason and state.order_id and not extracted_order_id:
+            state.reason = text
+            log_kv(logs, "state_reason_filled_raw", True)
+
         # Persist any slot updates to Redis
         save_state(state)
 

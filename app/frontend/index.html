@@ -89,7 +89,10 @@
     .msg.user .msg-meta{align-self:flex-end}
     .msg.agent .msg-bubble{background:var(--agent-bg);border-left:2px solid var(--accent)}
     .msg.error .msg-bubble{border-left:2px solid var(--danger);color:var(--danger)}
-    .intent-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.07em;padding:2px 7px;border:1px solid var(--border-lit);color:var(--muted);margin-top:4px}
+    .intent-badge {
+    display: inline-block;
+    align-self: flex-start;
+    width: fit-content;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.07em;padding:2px 7px;border:1px solid var(--border-lit);color:var(--muted);margin-top:4px}
     .intent-badge.guardrail{border-color:var(--danger);color:var(--danger)}
     .intent-badge.success{border-color:var(--accent);color:var(--accent)}
     .intent-badge.pending{border-color:var(--warn);color:var(--warn)}
@@ -357,6 +360,14 @@ async function sendMessage(){
     else if(ar==='pending_confirmation')bc='pending';
     else if(data.success)bc='success';
     appendMessage('agent',data.response,intent,bc);
+
+    // Update the order card only when a cancel or refund actually completed
+    const completedActions = ['cancel_order', 'request_refund'];
+    if(completedActions.includes(data.action_taken) && data.action_result === 'completed' && data.extracted?.order_id){
+      const newStatus = data.action_taken === 'cancel_order' ? 'cancelled' : 'refunded';
+      updateOrderCard(data.extracted.order_id, newStatus);
+    }
+
   }catch(err){
     typing.remove();
     if(err.message==='auth:expired'){appendMessage('error','Your session has expired. Please sign in again.');return;}
@@ -364,6 +375,43 @@ async function sendMessage(){
   }
   document.getElementById('send-btn').disabled=false;
   scrollToBottom();
+}
+
+// Update an order card's status badge and hint in the sidebar
+function updateOrderCard(orderId, newStatus){
+  const userId = document.getElementById('user-select').value;
+  const orders = ORDER_DATA[userId] || [];
+  const order = orders.find(o => o.id === orderId);
+  if(!order) return;
+
+  // Update the in-memory data so re-renders stay consistent
+  order.status = newStatus;
+  order.hint = newStatus === 'cancelled'
+    ? 'Successfully cancelled'
+    : 'Refund requested successfully';
+
+  // Find and update the rendered card directly
+  const panel = document.getElementById('orders-panel');
+  const cards = panel.querySelectorAll('.order-card');
+  cards.forEach(card => {
+    const idEl = card.querySelector('.order-id');
+    if(idEl && idEl.textContent === orderId){
+      const badge = card.querySelector('.status-badge');
+      const hint  = card.querySelector('.order-hint');
+      if(badge){
+        badge.className = `status-badge ${newStatus}`;
+        badge.textContent = newStatus;
+      }
+      if(hint) hint.textContent = order.hint;
+      // Brief flash to draw attention to the change
+      card.style.borderColor = 'var(--accent)';
+      card.style.background  = 'var(--accent-dim)';
+      setTimeout(() => {
+        card.style.borderColor = '';
+        card.style.background  = '';
+      }, 1500);
+    }
+  });
 }
 
 function quickSend(text){inputEl.value=text;sendMessage();}
