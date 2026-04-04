@@ -8,12 +8,9 @@ services:
       - .env
     volumes:
       - .:/app
-  
     depends_on:
       redis:
         condition: service_healthy
-    environment:
-      - REDIS_URL=redis://redis:6379
 
   redis:
     image: redis:7-alpine
@@ -29,5 +26,3 @@ services:
 
 volumes:
   redis_data:
-
-  
