@@ -1,20 +1,19 @@
 import json
-import logging
 from dataclasses import dataclass, asdict
 from typing import Optional
 
 import redis
 
-from app.utils.config import REDIS_URL, STATE_TTL
+from app.utils.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # ── Redis client (module-level, connection pooled) ──
 try:
-    _redis = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+    _redis = redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=2)
     _redis.ping()
-    logger.info(f"STATE | backend=redis | url={REDIS_URL}")
+    logger.info(f"STATE | backend=redis | url={settings.redis_url}")
 except Exception as e:
     logger.warning(f"STATE | backend=memory | redis_unavailable | reason={e}")
     _redis = None
@@ -87,7 +86,7 @@ def _redis_get(user_id: str) -> Optional[WorkflowState]:
 
 def _redis_set(state: WorkflowState) -> bool:
     try:
-        _redis.setex(_redis_key(state.user_id), STATE_TTL, _serialize(state))
+        _redis.setex(_redis_key(state.user_id), settings.state_ttl, _serialize(state))
         return True
     except Exception as e:
         logger.warning(f"STATE | redis_set_failed | user_id={state.user_id} | reason={e} | falling_back=memory")
