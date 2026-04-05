@@ -82,7 +82,7 @@ def llm_route_message(text: str, user_id: str = "unknown") -> tuple[RoutedIntent
             logger.warning(
                 f"LLM_ROUTER | user_id={user_id} | result=invalid | intent={intent!r} | falling_back=unknown"
             )
-            return RoutedIntent(intent="unknown"), "llm_invalid"
+            return RoutedIntent(intent="unknown"), "invalid_intent"
 
         logger.info(
             f"LLM_ROUTER | user_id={user_id} | source=llm | intent={intent}"

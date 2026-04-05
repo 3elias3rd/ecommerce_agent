@@ -102,9 +102,9 @@ def _redis_delete(user_id: str) -> bool:
         return False
 
 
-# ──────────────────────────────────────────────────────
-# Public interface (unchanged from original)
-# ──────────────────────────────────────────────────────
+# ─────────────────
+# Public interface 
+# ─────────────────
 
 def get_or_create_state(user_id: str) -> WorkflowState:
     """Load state from Redis, fall back to memory, create fresh if not found."""
@@ -113,7 +113,8 @@ def get_or_create_state(user_id: str) -> WorkflowState:
         if state:
             return state
         state = WorkflowState(user_id=user_id)
-        _redis_set(state)
+        if not _redis_set(state):
+            _memory_store[user_id] = state
         return state
 
     # Memory fallback
