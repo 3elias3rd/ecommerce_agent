@@ -90,14 +90,16 @@ def _execute_refund(
     clear_state(user_id)
     state_after = state.to_dict()
 
-    logger.info(
-        f"AGENT | intent=request_refund"
-        f" | state={'action_completed' if result['success'] else 'action_blocked'}"
-        f" | action=request_refund"
-        f" | result={'completed' if result['success'] else 'blocked'}"
-        f" | guardrail={guardrail}"
-        f" | order_id={order_id}"
-    )
+    if result["success"]:
+        logger.info(
+            f"AGENT | user_id={user_id} | intent=request_refund | state=action_completed"
+            f" | action=request_refund | result=completed | order_id={order_id}"
+        )
+    else:
+        logger.warning(
+            f"AGENT | user_id={user_id} | intent=request_refund | state=action_blocked"
+            f" | action=request_refund | result=blocked | guardrail={guardrail} | order_id={order_id}"
+        )
 
     return AgentResponse(
         response=result["message"],
@@ -147,14 +149,16 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
                 clear_state(user_id)
                 state_after = state.to_dict()
 
-                logger.info(
-                    f"AGENT | intent=cancel_order"
-                    f" | state={'action_completed' if result['success'] else 'action_blocked'}"
-                    f" | action=cancel_order"
-                    f" | result={'completed' if result['success'] else 'blocked'}"
-                    f" | guardrail={guardrail}"
-                    f" | order_id={pending_order_id}"
-                )
+                if result["success"]:
+                    logger.info(
+                        f"AGENT | user_id={user_id} | intent=cancel_order | state=action_completed"
+                        f" | action=cancel_order | result=completed | order_id={pending_order_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"AGENT | user_id={user_id} | intent=cancel_order | state=action_blocked"
+                        f" | action=cancel_order | result=blocked | guardrail={guardrail} | order_id={pending_order_id}"
+                    )
 
                 return AgentResponse(
                     response=result["message"],
@@ -180,11 +184,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_after = state.to_dict()
 
             logger.warning(
-                f"AGENT | intent=unknown"
-                f" | state=confirmation_invalid"
-                f" | action=None"
-                f" | guardrail=None"
-                f" | order_id={pending_order_id}"
+                f"AGENT | user_id={user_id} | intent=unknown | state=confirmation_invalid"
+                f" | action=None | guardrail=None | order_id={pending_order_id}"
             )
 
             return AgentResponse(
@@ -207,12 +208,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_after = state.to_dict()
 
             logger.info(
-                f"AGENT | intent=cancel_order"
-                f" | state=confirmation_declined"
-                f" | action=cancel_order"
-                f" | result=declined"
-                f" | guardrail=None"
-                f" | order_id={pending_order_id}"
+                f"AGENT | user_id={user_id} | intent=cancel_order | state=confirmation_declined"
+                f" | action=cancel_order | result=declined | order_id={pending_order_id}"
             )
 
             return AgentResponse(
@@ -234,11 +231,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state_after = state.to_dict()
 
         logger.info(
-            f"AGENT | intent={state.pending_intent}"
-            f" | state=awaiting_confirmation"
-            f" | action=None"
-            f" | guardrail=None"
-            f" | order_id={pending_order_id}"
+            f"AGENT | user_id={user_id} | intent={state.pending_intent} | state=awaiting_confirmation"
+            f" | action=None | order_id={pending_order_id}"
         )
 
         return AgentResponse(
@@ -294,10 +288,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             log_kv(logs, "missing_fields", ",".join(missing_fields))
 
             logger.info(
-                f"AGENT | intent=request_refund"
-                f" | state=awaiting_missing_fields"
-                f" | missing={','.join(missing_fields)}"
-                f" | order_id={state.order_id}"
+                f"AGENT | user_id={user_id} | intent=request_refund | state=awaiting_missing_fields"
+                f" | missing={','.join(missing_fields)} | order_id={state.order_id}"
             )
 
             return _missing_fields_response(
@@ -335,10 +327,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_after = state.to_dict()
 
             logger.info(
-                f"AGENT | intent=cancel_order"
-                f" | state=awaiting_confirmation"
-                f" | order_id={extracted_order_id}"
-                f" | source=slot_fill"
+                f"AGENT | user_id={user_id} | intent=cancel_order | state=awaiting_confirmation"
+                f" | order_id={extracted_order_id} | source=slot_fill"
             )
 
             return AgentResponse(
@@ -363,7 +353,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state_after = state.to_dict()
 
         logger.info(
-            "AGENT | intent=cancel_order | state=awaiting_missing_fields | missing=order_id"
+            f"AGENT | user_id={user_id} | intent=cancel_order | state=awaiting_missing_fields | missing=order_id"
         )
 
         return AgentResponse(
@@ -385,7 +375,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
     # ──────────────────────────────────────────
     # 3) Fresh routing
     # ──────────────────────────────────────────
-    route_result = route_message(text)
+    route_result = route_message(text, user_id=user_id)
     routed, routing_source = normalize_route_result(route_result)
 
     log_kv(logs, "routing_source", routing_source)
@@ -398,7 +388,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state_after = state.to_dict()
 
         logger.info(
-            "AGENT | intent=unknown | state=unable_to_route | action=None | guardrail=None"
+            f"AGENT | user_id={user_id} | intent=unknown | state=unable_to_route"
         )
 
         return AgentResponse(
@@ -431,7 +421,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_after = state.to_dict()
 
             logger.info(
-                "AGENT | intent=get_order | state=awaiting_missing_fields | missing=order_id"
+                f"AGENT | user_id={user_id} | intent=get_order | state=awaiting_missing_fields | missing=order_id"
             )
 
             return AgentResponse(
@@ -457,10 +447,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             guardrail = map_guardrail(result["message"])
 
             logger.warning(
-                f"AGENT | intent=get_order"
-                f" | state=action_blocked"
-                f" | guardrail={guardrail}"
-                f" | order_id={routed.order_id}"
+                f"AGENT | user_id={user_id} | intent=get_order | state=action_blocked"
+                f" | guardrail={guardrail} | order_id={routed.order_id}"
             )
 
             return AgentResponse(
@@ -485,10 +473,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         item_name = order["item_name"].replace("_", " ")
 
         logger.info(
-            f"AGENT | intent=get_order"
-            f" | state=lookup_completed"
-            f" | order_id={routed.order_id}"
-            f" | status={order['status']}"
+            f"AGENT | user_id={user_id} | intent=get_order | state=lookup_completed"
+            f" | order_id={routed.order_id} | status={order['status']}"
         )
 
         return AgentResponse(
@@ -524,7 +510,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_after = state.to_dict()
 
             logger.info(
-                "AGENT | intent=cancel_order | state=awaiting_missing_fields | missing=order_id"
+                f"AGENT | user_id={user_id} | intent=cancel_order | state=awaiting_missing_fields | missing=order_id"
             )
 
             return AgentResponse(
@@ -550,8 +536,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         state_after = state.to_dict()
 
         logger.info(
-            f"AGENT | intent=cancel_order"
-            f" | state=awaiting_confirmation"
+            f"AGENT | user_id={user_id} | intent=cancel_order | state=awaiting_confirmation"
             f" | order_id={routed.order_id}"
         )
 
@@ -591,10 +576,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             log_kv(logs, "missing_fields", ",".join(missing_fields))
 
             logger.info(
-                f"AGENT | intent=request_refund"
-                f" | state=awaiting_missing_fields"
-                f" | missing={','.join(missing_fields)}"
-                f" | order_id={state.order_id}"
+                f"AGENT | user_id={user_id} | intent=request_refund | state=awaiting_missing_fields"
+                f" | missing={','.join(missing_fields)} | order_id={state.order_id}"
             )
 
             return _missing_fields_response(
@@ -621,7 +604,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
     state_after = state.to_dict()
 
     logger.warning(
-        "AGENT | state=routing_fell_through | action=None"
+        f"AGENT | user_id={user_id} | state=routing_fell_through"
     )
 
     return AgentResponse(

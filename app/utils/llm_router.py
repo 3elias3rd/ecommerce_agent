@@ -46,7 +46,7 @@ Response format:
 
 # ── Main extraction function ────────────────────────────────────
 
-def llm_route_message(text: str) -> tuple[RoutedIntent, str]:
+def llm_route_message(text: str, user_id: str = "unknown") -> tuple[RoutedIntent, str]:
     """
     Use OpenAI to extract intent and entities from a message.
     Returns a tuple of (RoutedIntent, "llm") on success,
@@ -55,6 +55,7 @@ def llm_route_message(text: str) -> tuple[RoutedIntent, str]:
     client = _get_client()
 
     if not client:
+        logger.warning(f"LLM_ROUTER | user_id={user_id} | result=unavailable | reason=no_api_key")
         return RoutedIntent(intent="unknown"), "llm_unavailable"
 
     try:
@@ -72,22 +73,20 @@ def llm_route_message(text: str) -> tuple[RoutedIntent, str]:
         raw = response.choices[0].message.content or ""
         data = json.loads(raw)
 
-        intent    = data.get("intent", "unknown")
-        order_id  = data.get("order_id") or None
-        reason    = data.get("reason") or None
+        intent   = data.get("intent", "unknown")
+        order_id = data.get("order_id") or None
+        reason   = data.get("reason") or None
 
-        # Validate intent is one of the allowed values
         valid_intents = {"get_order", "cancel_order", "request_refund", "unknown"}
         if intent not in valid_intents:
             logger.warning(
-                f"LLM_ROUTER | invalid_intent={intent!r} | falling_back=unknown"
+                f"LLM_ROUTER | user_id={user_id} | result=invalid | intent={intent!r} | falling_back=unknown"
             )
             return RoutedIntent(intent="unknown"), "llm_invalid"
 
         logger.info(
-            f"LLM_ROUTER | intent={intent}"
-            f" | order_id={order_id}"
-            f" | reason_present={reason is not None}"
+            f"LLM_ROUTER | user_id={user_id} | source=llm | intent={intent}"
+            f" | order_id={order_id} | reason_present={reason is not None}"
             f" | model={settings.openai_model}"
         )
 
@@ -100,32 +99,25 @@ def llm_route_message(text: str) -> tuple[RoutedIntent, str]:
 
     except APITimeoutError:
         logger.warning(
-            f"LLM_ROUTER | error=timeout"
-            f" | timeout={settings.router_timeout}s"
-            f" | falling_back=unknown"
+            f"LLM_ROUTER | user_id={user_id} | result=error | error=timeout"
+            f" | timeout={settings.router_timeout}s | falling_back=unknown"
         )
         return RoutedIntent(intent="unknown"), "llm_timeout"
 
     except APIError as e:
         logger.warning(
-            f"LLM_ROUTER | error=api_error"
-            f" | detail={e}"
-            f" | falling_back=unknown"
+            f"LLM_ROUTER | user_id={user_id} | result=error | error=api_error | detail={e} | falling_back=unknown"
         )
         return RoutedIntent(intent="unknown"), "llm_api_error"
 
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning(
-            f"LLM_ROUTER | error=parse_error"
-            f" | detail={e}"
-            f" | falling_back=unknown"
+            f"LLM_ROUTER | user_id={user_id} | result=error | error=parse_error | detail={e} | falling_back=unknown"
         )
         return RoutedIntent(intent="unknown"), "llm_parse_error"
 
     except Exception as e:
         logger.warning(
-            f"LLM_ROUTER | error=unexpected"
-            f" | detail={e}"
-            f" | falling_back=unknown"
+            f"LLM_ROUTER | user_id={user_id} | result=error | error=unexpected | detail={e} | falling_back=unknown"
         )
         return RoutedIntent(intent="unknown"), "llm_error"
