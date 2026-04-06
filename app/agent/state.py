@@ -1,19 +1,19 @@
 import json
+import logging
 from dataclasses import dataclass, asdict
 from typing import Optional
 
 import redis
 
-from app.utils.config import settings
-from app.utils.logger import get_logger
+from app.utils.config import REDIS_URL, STATE_TTL
 
-logger = get_logger(__name__)
+logger = logging.getLogger("state")
 
 # ── Redis client (module-level, connection pooled) ──
 try:
-    _redis = redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=2)
+    _redis = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
     _redis.ping()
-    logger.info(f"STATE | backend=redis | url={settings.redis_url}")
+    logger.info(f"STATE | backend=redis | url={REDIS_URL}")
 except Exception as e:
     logger.warning(f"STATE | backend=memory | redis_unavailable | reason={e}")
     _redis = None
@@ -38,6 +38,7 @@ class WorkflowState:
     reason: Optional[str] = None
     awaiting_confirmation: bool = False
     last_action: Optional[str] = None
+    last_mentioned_order_id: Optional[str] = None  # persists across clear_state
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +47,7 @@ class WorkflowState:
             "reason": self.reason,
             "awaiting_confirmation": self.awaiting_confirmation,
             "last_action": self.last_action,
+            "last_mentioned_order_id": self.last_mentioned_order_id,
         }
 
 
@@ -66,6 +68,7 @@ def _deserialize(user_id: str, raw: str) -> WorkflowState:
         reason=data.get("reason"),
         awaiting_confirmation=data.get("awaiting_confirmation", False),
         last_action=data.get("last_action"),
+        last_mentioned_order_id=data.get("last_mentioned_order_id"),
     )
 
 
@@ -86,7 +89,7 @@ def _redis_get(user_id: str) -> Optional[WorkflowState]:
 
 def _redis_set(state: WorkflowState) -> bool:
     try:
-        _redis.setex(_redis_key(state.user_id), settings.state_ttl, _serialize(state))
+        _redis.setex(_redis_key(state.user_id), STATE_TTL, _serialize(state))
         return True
     except Exception as e:
         logger.warning(f"STATE | redis_set_failed | user_id={state.user_id} | reason={e} | falling_back=memory")
@@ -102,9 +105,9 @@ def _redis_delete(user_id: str) -> bool:
         return False
 
 
-# ─────────────────
-# Public interface 
-# ─────────────────
+# ──────────────────────────────────────────────────────
+# Public interface (unchanged from original)
+# ──────────────────────────────────────────────────────
 
 def get_or_create_state(user_id: str) -> WorkflowState:
     """Load state from Redis, fall back to memory, create fresh if not found."""
@@ -113,8 +116,7 @@ def get_or_create_state(user_id: str) -> WorkflowState:
         if state:
             return state
         state = WorkflowState(user_id=user_id)
-        if not _redis_set(state):
-            _memory_store[user_id] = state
+        _redis_set(state)
         return state
 
     # Memory fallback
@@ -136,11 +138,25 @@ def save_state(state: WorkflowState) -> None:
 
 
 def clear_state(user_id: str) -> None:
-    """Reset state for a user (after action completes or is declined)."""
-    fresh = WorkflowState(user_id=user_id)
+    """
+    Reset workflow state for a user after an action completes or is declined.
+    Preserves last_mentioned_order_id so conversational context survives
+    across workflow resets (e.g. user can refer to 'that order' after a cancel).
+    """
+    # Load existing state to preserve last_mentioned_order_id
+    existing = None
+    if _redis:
+        existing = _redis_get(user_id)
+    else:
+        existing = _memory_store.get(user_id)
+
+    fresh = WorkflowState(
+        user_id=user_id,
+        last_mentioned_order_id=existing.last_mentioned_order_id if existing else None,
+    )
 
     if _redis:
-        if not _redis_delete(user_id):
+        if not _redis_set(fresh):
             _memory_store[user_id] = fresh
         _memory_store.pop(user_id, None)
     else:

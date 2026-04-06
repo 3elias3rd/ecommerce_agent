@@ -4,11 +4,21 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-ORDER_ID_PATTERN = r"\bORD-\d{4,}\b"
+ORDER_ID_PATTERN = r"\bORD[\s_-]?\d{4,}\b"
+
 
 def extract_order_id(message: str) -> str | None:
-    match = re.search(ORDER_ID_PATTERN, message.upper())
-    return match.group(0) if match else None
+    """
+    Extract and normalise an order ID from free-form text.
+    Handles: ORD-2001, ORD_2001, ORD 2001, ORD2001 (case-insensitive).
+    Always returns the canonical format: ORD-XXXX.
+    """
+    match = re.search(ORDER_ID_PATTERN, message, flags=re.IGNORECASE)
+    if not match:
+        return None
+    # Normalise to canonical ORD-XXXX format
+    digits = re.search(r"\d{4,}", match.group(0)).group(0)
+    return f"ORD-{digits}"
 
 
 def extract_reason(text: str) -> str | None:

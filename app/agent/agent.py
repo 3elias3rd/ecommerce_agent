@@ -261,6 +261,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
         if extracted_order_id and not state.order_id:
             state.order_id = extracted_order_id
+            state.last_mentioned_order_id = extracted_order_id
             log_kv(logs, "state_order_id_filled", extracted_order_id)
 
         if extracted_reason and not state.reason:
@@ -322,6 +323,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
         if extracted_order_id:
             state.order_id = extracted_order_id
+            state.last_mentioned_order_id = extracted_order_id
             state.awaiting_confirmation = True
             save_state(state)
             state_after = state.to_dict()
@@ -472,6 +474,10 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         order = result["order"]
         item_name = order["item_name"].replace("_", " ")
 
+        # Update conversational context
+        state.last_mentioned_order_id = routed.order_id
+        save_state(state)
+
         logger.info(
             f"AGENT | user_id={user_id} | intent=get_order | state=lookup_completed"
             f" | order_id={routed.order_id} | status={order['status']}"
@@ -502,9 +508,10 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
     # ── Cancel order ──
     if routed.intent == "cancel_order":
-        if not routed.order_id:
-            # Persist intent so the next reply (the order ID) is slot-filled
-            # into this flow rather than routed as a fresh get_order lookup
+        # Use last mentioned order ID if none in this message
+        resolved_order_id = routed.order_id or state.last_mentioned_order_id
+
+        if not resolved_order_id:
             state.pending_intent = "cancel_order"
             save_state(state)
             state_after = state.to_dict()
@@ -530,19 +537,24 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             )
 
         state.pending_intent = "cancel_order"
-        state.order_id = routed.order_id
+        state.order_id = resolved_order_id
         state.awaiting_confirmation = True
-        save_state(state)  # persist to Redis
+        state.last_mentioned_order_id = resolved_order_id
+        save_state(state)
         state_after = state.to_dict()
+
+        # Tell the user which order we resolved to if they didn't say it explicitly
+        if not routed.order_id:
+            log_kv(logs, "order_id_source", "last_mentioned")
 
         logger.info(
             f"AGENT | user_id={user_id} | intent=cancel_order | state=awaiting_confirmation"
-            f" | order_id={routed.order_id}"
+            f" | order_id={resolved_order_id} | order_id_source={'message' if routed.order_id else 'last_mentioned'}"
         )
 
         return AgentResponse(
             response=(
-                f"You're about to cancel order {routed.order_id}.\n\n"
+                f"You're about to cancel order {resolved_order_id}.\n\n"
                 "Reply 'yes' to confirm or 'no' to keep the order."
             ),
             success=True,
@@ -554,16 +566,21 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             action_attempted="cancel_order",
             action_result="pending_confirmation",
             guardrail_triggered=None,
-            extracted={"order_id": routed.order_id},
+            extracted={"order_id": resolved_order_id},
             logs=logs + ["state_updated=awaiting_cancel_confirmation"],
         )
 
     # ── Request refund ──
     if routed.intent == "request_refund":
+        # Use last mentioned order ID if none in this message
+        resolved_order_id = routed.order_id or state.last_mentioned_order_id
+
         state.pending_intent = "request_refund"
-        state.order_id = routed.order_id
+        state.order_id = resolved_order_id
         state.reason = routed.reason
-        save_state(state)  # persist to Redis
+        if resolved_order_id:
+            state.last_mentioned_order_id = resolved_order_id
+        save_state(state)
 
         missing_fields: list[str] = []
         if not state.order_id:
@@ -574,6 +591,8 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
         if missing_fields:
             state_after = state.to_dict()
             log_kv(logs, "missing_fields", ",".join(missing_fields))
+            if routed.order_id is None and state.last_mentioned_order_id:
+                log_kv(logs, "order_id_source", "last_mentioned")
 
             logger.info(
                 f"AGENT | user_id={user_id} | intent=request_refund | state=awaiting_missing_fields"

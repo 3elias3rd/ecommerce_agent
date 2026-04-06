@@ -2,6 +2,7 @@ import json
 from openai import OpenAI, APIError, APITimeoutError
 
 from app.agent.schemas import RoutedIntent
+from app.agent.router import extract_order_id
 from app.utils.config import settings
 from app.utils.logger import get_logger
 
@@ -73,16 +74,20 @@ def llm_route_message(text: str, user_id: str = "unknown") -> tuple[RoutedIntent
         raw = response.choices[0].message.content or ""
         data = json.loads(raw)
 
-        intent   = data.get("intent", "unknown")
-        order_id = data.get("order_id") or None
-        reason   = data.get("reason") or None
+        intent        = data.get("intent", "unknown")
+        raw_order_id  = data.get("order_id") or None
+        reason        = data.get("reason") or None
+
+        # Normalise the order ID through the same extraction logic as the
+        # rule-based router — handles variants like ord2003, ORD_2003 etc.
+        order_id = extract_order_id(raw_order_id) if raw_order_id else None
 
         valid_intents = {"get_order", "cancel_order", "request_refund", "unknown"}
         if intent not in valid_intents:
             logger.warning(
                 f"LLM_ROUTER | user_id={user_id} | result=invalid | intent={intent!r} | falling_back=unknown"
             )
-            return RoutedIntent(intent="unknown"), "invalid_intent"
+            return RoutedIntent(intent="unknown"), "llm_invalid"
 
         logger.info(
             f"LLM_ROUTER | user_id={user_id} | source=llm | intent={intent}"
