@@ -59,14 +59,16 @@ Authorization: Bearer <token>
 - ❌ Cancellation flow with explicit confirmation step
 - 💰 Refund request flow with slot-filling (order ID + reason)
 - 🔄 Stateful multi-turn interactions via Redis (in-memory fallback)
+- 🧠 Conversational order memory — agent remembers the last mentioned order across turns
 - 🛡️ Strict guardrails preventing invalid operations
 - ⚙️ Deterministic execution — LLM is used for extraction only, never action execution
 - 🤖 LLM fallback router (OpenAI) for natural language not matched by rules
+- 📝 Order ID normalisation — accepts `ORD-2001`, `ORD_2001`, `ORD 2001`, `ORD2001`
 - 🔐 JWT authentication with bcrypt password hashing
 - 🚦 Rate limiting on agent and auth endpoints
-- 📊 Structured logging across all modules
-- 🖥️ Built-in test console frontend (login screen + chat UI)
-- ✅ Full test coverage using pytest
+- 📊 Structured logging across all modules with consistent `KEY=value` format
+- 🖥️ Built-in test console frontend (login screen + chat UI + live order status updates)
+- ✅ Comprehensive test coverage using pytest
 
 ---
 
@@ -74,13 +76,13 @@ Authorization: Bearer <token>
 
 | Layer | Responsibility |
 |-------|---------------|
-| **Router** | Rule-based intent + entity extraction. Falls back to LLM (OpenAI) for unmatched input. |
-| **Agent** | Orchestrates workflow, manages state transitions, applies guardrails, calls tools. |
+| **Router** | Rule-based intent + entity extraction with order ID normalisation. Falls back to LLM (OpenAI) for unmatched input. |
+| **Agent** | Orchestrates workflow, manages state transitions, resolves conversational context, applies guardrails, calls tools. |
 | **Tools** | Encapsulate business logic, interact with the database, return structured results. |
-| **State Layer** | Redis-backed per-user workflow state with automatic in-memory fallback. |
-| **Auth Layer** | JWT bearer tokens, bcrypt password hashing, users stored in environment variables. |
+| **State Layer** | Redis-backed per-user workflow state with automatic in-memory fallback. Persists `last_mentioned_order_id` across workflow resets. |
+| **Auth Layer** | JWT bearer tokens, bcrypt password hashing, users stored as flat environment variable pairs. |
 | **API Layer** | FastAPI endpoints with rate limiting and authentication dependencies. |
-| **Frontend** | Single-file HTML/JS test console with login screen, chat UI, and seed order reference panel. |
+| **Frontend** | Single-file HTML/JS test console with login screen, chat UI, live order status updates, and seed order reference panel. |
 
 ---
 
@@ -90,13 +92,15 @@ Authorization: Bearer <token>
 1.  Receive message and user_id
 2.  Load or initialize user state (Redis → memory fallback)
 3.  Check if awaiting confirmation
-4.  Route intent via rule-based router
+4.  Check if pending slot-filling (refund or cancel)
+5.  Route intent via rule-based router
         └─ if unknown → LLM fallback router (OpenAI)
-5.  Validate required fields (slot filling)
-6.  Apply guardrails
-7.  Execute tool (if valid)
-8.  Save state (Redis)
-9.  Return structured response with metadata
+6.  Resolve order ID (message → last_mentioned_order_id fallback)
+7.  Validate required fields (slot filling)
+8.  Apply guardrails
+9.  Execute tool (if valid)
+10. Save state (Redis)
+11. Return structured response with metadata
 ```
 
 ---
@@ -137,8 +141,8 @@ All actions are validated before execution. Guardrails are enforced in the servi
 ```
 app/
 ├── agent/
-│   ├── agent.py         # workflow orchestration
-│   ├── router.py        # rule-based intent + entity extraction
+│   ├── agent.py         # workflow orchestration + conversational memory
+│   ├── router.py        # rule-based intent + entity extraction + order ID normalisation
 │   ├── state.py         # Redis-backed state management
 │   └── schemas.py       # request/response models
 ├── api/
@@ -164,7 +168,7 @@ app/
 │   └── index.html       # test console (login + chat UI)
 ├── main.py              # app entrypoint, lifespan, middleware
 scripts/
-└── generate_auth_users.py  # bcrypt hash generator for AUTH_USERS env var
+└── generate_auth_users.py  # bcrypt hash generator for env var credentials
 ```
 
 ---
@@ -209,18 +213,22 @@ DATABASE_URL=sqlite:///./orders.db
 REDIS_URL=redis://localhost:6379
 STATE_TTL=3600
 
-# Auth
+# Auth — stored as flat env vars to avoid $ mangling on deployment platforms
 SECRET_KEY=your-secret-key-here
 ACCESS_TOKEN_EXPIRE_MINUTES=480
-AUTH_USERS={"tester1":"$2b$12$...","tester2":"$2b$12$..."}
+AUTH_USER_1=user_1
+AUTH_PASS_1=$2b$12$...
+AUTH_USER_2=user_2
+AUTH_PASS_2=$2b$12$...
 
 # OpenAI (optional — only needed for LLM fallback router)
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o-mini
 ROUTER_TIMEOUT=5
+ROUTER_TEMPERATURE=0.0
 ```
 
-### Generating AUTH_USERS
+### Generating credentials
 
 Edit `scripts/generate_auth_users.py` with your usernames and plaintext passwords, then run:
 
@@ -228,7 +236,7 @@ Edit `scripts/generate_auth_users.py` with your usernames and plaintext password
 python scripts/generate_auth_users.py
 ```
 
-Copy the output value into your `.env` or deployment environment variables.
+This outputs individual `AUTH_USER_N` / `AUTH_PASS_N` pairs ready to paste into your `.env` or set as deployment environment variables. Credentials are stored as flat pairs rather than a JSON blob to avoid `$` character mangling on platforms like Koyeb.
 
 ### Generating a SECRET_KEY
 
@@ -309,7 +317,7 @@ POST /auth/login
 Authorization: Bearer eyJ...
 ```
 
-Tokens expire after 8 hours. Users are defined via the `AUTH_USERS` environment variable as a JSON object of `{username: bcrypt_hash}` pairs.
+Tokens expire after 8 hours. Users are defined via flat `AUTH_USER_N` / `AUTH_PASS_N` environment variable pairs — up to 5 users supported by default, extendable in `config.py`. Generate hashed credentials using the provided script.
 
 ---
 
@@ -340,25 +348,36 @@ Coverage includes agent workflows, tool logic, API endpoints, guardrails, and ed
 LLMs are used only for intent and entity extraction. All business logic, guardrails, and state transitions run through controlled backend code. The LLM cannot trigger actions directly.
 
 **Rule-based router with LLM fallback**
-Common phrases are matched by fast, free keyword rules. The LLM (OpenAI `gpt-4o-mini`) is only called when the rule-based router returns `unknown` — minimising latency and cost while handling natural language gracefully.
+Common phrases are matched by fast, free keyword rules. The LLM (`gpt-4o-mini`) is only invoked when the rule-based router returns `unknown` — minimising latency and cost while handling natural language gracefully. Both routing paths pass their extracted order ID through the same normalisation function, ensuring canonical `ORD-XXXX` format regardless of what the user typed.
+
+**Order ID normalisation**
+`extract_order_id()` in `router.py` is the single normalisation point for the whole system. It accepts `ORD-2001`, `ORD_2001`, `ORD 2001`, and `ORD2001` (case-insensitive) and always returns `ORD-XXXX`. The LLM router imports and reuses this same function so both paths behave identically.
+
+**Conversational order memory**
+`WorkflowState` stores a `last_mentioned_order_id` field that persists across workflow resets. When a user says "cancel that" or "refund it" after a previous lookup, the agent resolves the order ID from context rather than prompting again. This field survives `clear_state()` deliberately — workflow state is reset after each action, but conversational context is not.
 
 **Redis state with in-memory fallback**
-Multi-turn conversations require persistent context. Redis handles this with a 1-hour TTL per session. If Redis is unavailable, the app falls back to in-memory state and logs a warning — no crash, no data loss for active sessions.
+Multi-turn conversations require persistent context. Redis handles this with a configurable TTL per session. If Redis is unavailable, the app falls back to in-memory state and logs a warning — no crash, no data loss for active sessions.
+
+**Flat env var credentials**
+User credentials are stored as individual `AUTH_USER_N` / `AUTH_PASS_N` pairs rather than a JSON blob. This avoids `$` character mangling that occurs when bcrypt hashes are embedded in JSON strings on deployment platforms such as Koyeb.
 
 **Separation of concerns**
-Routing, orchestration, business logic, and persistence are kept in separate layers. This makes the system testable, observable, and easy to extend.
+Routing, orchestration, business logic, and persistence are kept in separate layers. This makes the system testable, observable, and easy to extend without cross-layer side effects.
 
 **Structured logging**
-Every significant event — intent routing, tool calls, guardrail triggers, state transitions, Redis operations — is logged in a consistent `KEY=value` format, making logs grep-friendly and easy to pipe into external tooling.
+Every significant event — intent routing, tool calls, guardrail triggers, state transitions, Redis operations — is logged in a consistent `LAYER | user_id=X | key=value` format across all modules. `WARNING` is used for guardrail blocks and fallbacks; `INFO` for normal flow. Every log line includes `user_id` so concurrent sessions can be traced independently.
+
+**Frontend order card updates**
+After a successful cancel or refund, the sidebar order card status updates in-place with a brief highlight animation. The update only fires when `action_taken` is `cancel_order` or `request_refund` and `action_result` is `completed` — preventing lookup responses from incorrectly updating card status.
 
 ---
 
 ## Limitations & Future Improvements
 
 **Current limitations:**
-- No conversation history — each message is stateless beyond the workflow fields
+- No conversation history beyond workflow fields and last mentioned order
 - Auth users are env-var based — no self-service registration
-- Rule-based router relies on keyword matching and may miss edge cases
 - No analytics or metrics dashboard
 
 **Planned improvements:**
