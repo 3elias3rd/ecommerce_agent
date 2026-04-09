@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -8,8 +8,9 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api.routes import router
 from app.api.auth_routes import router as auth_router
-from app.utils.logger import get_logger
+from app.api.admin_routes import router as admin_router
 from app.utils.rate_limiter import limiter
+from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -51,8 +52,9 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────
-app.include_router(auth_router)  # /auth/login  — public
-app.include_router(router)       # all other routes — protected
+app.include_router(auth_router)   # /auth/login       — public
+app.include_router(admin_router)  # /admin/reset      — public, Swagger only
+app.include_router(router)        # all other routes  — protected
 
 # ── Frontend — must be last ───────────────────────────────────
 app.mount("/", StaticFiles(directory="app/frontend", html=True), name="frontend")
