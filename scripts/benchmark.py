@@ -36,11 +36,11 @@ from datetime import datetime
 import httpx
 
 # ── Configuration ─────────────────────────────────────────────
-BASE_URL  = "https://ethnic-brittany-3rdindustries-fd4f61c1.koyeb.app/"   
+BASE_URL  = "https://ethnic-brittany-3rdindustries-fd4f61c1.koyeb.app"   
 USERNAME  = "user_1"
 PASSWORD  = "password123"
 REPEATS   = 20    # requests per scenario — minimum 20 for stable averages
-DELAY     = 0.3   # seconds between requests (be kind to the rate limiter)
+DELAY     = 2.1   # seconds between requests (be kind to the rate limiter)
 # ──────────────────────────────────────────────────────────────
 
 # Test scenarios — covers rule-based and LLM paths, read and write ops
@@ -49,7 +49,7 @@ SCENARIOS = [
         "name":        "lookup_rule",
         "description": "Order lookup — rule-based routing",
         "user_id":     "user_2",
-        "message":     "Check ORD-2003",
+        "message":     "ORD-2003",
         "path":        "rule",
     },
     {

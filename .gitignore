@@ -23,3 +23,4 @@ Thumbs.db
 # Testing & Coverage (For tests later)
 .pytest_cache/
 .coverage
+.csv

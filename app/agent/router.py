@@ -119,7 +119,7 @@ def route_message(message: str, user_id: str = "unknown") -> tuple[RoutedIntent,
         )
 
     # ── Bare order ID ──
-    elif order_id:
+    elif len(message) <= 15 and order_id:
         result = RoutedIntent(intent="get_order", order_id=order_id)
 
     # ── Unknown — escalate to LLM ──
