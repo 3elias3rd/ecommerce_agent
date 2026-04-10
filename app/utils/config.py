@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # ── Benchmarking ───────────────────────────────────────
+    # Set ENABLE_TIMING=true to log per-layer response times.
+    # Toggle on for benchmarking, off for normal operation.
+    enable_timing: bool = False
 
 settings = Settings()
 

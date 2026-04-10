@@ -1,12 +1,54 @@
 from sqlalchemy.orm import Session
+import time
+from contextlib import contextmanager
 
 from app.agent.router import extract_order_id, extract_reason, route_message
 from app.agent.schemas import AgentResponse, RoutedIntent
 from app.agent.state import clear_state, get_or_create_state, save_state
 from app.tools.orders import cancel_order, get_order, request_refund
+from app.utils.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+# ──────────────────────────────────────────────────────
+# Timing
+# ──────────────────────────────────────────────────────
+
+class RequestTimer:
+    """
+    Lightweight per-request timer. Records split times for each
+    named phase. Only logs if ENABLE_TIMING=true in config.
+    """
+    # All phases in order — missing ones reported as 0.0ms
+    PHASES = ["state_load", "routing", "tool", "state_save"]
+
+    def __init__(self):
+        self._start = time.perf_counter()
+        self._splits: dict[str, float] = {}
+        self._last = self._start
+
+    def split(self, label: str) -> None:
+        """Record elapsed time since the last split (or start)."""
+        now = time.perf_counter()
+        self._splits[label] = round((now - self._last) * 1000, 2)
+        self._last = now
+
+    def total_ms(self) -> float:
+        return round((time.perf_counter() - self._start) * 1000, 2)
+
+    def log(self, user_id: str, routing_source: str) -> None:
+        if not settings.enable_timing:
+            return
+        parts = " | ".join(
+            f"{phase}={self._splits.get(phase, 0.0)}ms"
+            for phase in self.PHASES
+        )
+        logger.info(
+            f"TIMING | user_id={user_id} | source={routing_source}"
+            f" | {parts} | total={self.total_ms()}ms"
+        )
 
 
 # ──────────────────────────────────────────────────────
@@ -78,6 +120,7 @@ def _execute_refund(
     state_before: dict,
     logs: list[str],
     db: Session,
+    timer: "RequestTimer | None" = None,
 ) -> AgentResponse:
     """
     Execute a refund tool call and return the AgentResponse.
@@ -85,9 +128,14 @@ def _execute_refund(
     to avoid duplicating this logic.
     """
     result = request_refund(order_id, reason, db)
-    guardrail = map_guardrail(result["message"])
+    if timer:
+        timer.split("tool")
 
+    guardrail = map_guardrail(result["message"])
     clear_state(user_id)
+    if timer:
+        timer.split("state_save")
+
     state_after = state.to_dict()
 
     if result["success"]:
@@ -125,10 +173,25 @@ def _execute_refund(
 # ──────────────────────────────────────────────────────
 
 def handle_agent_message(user_id: str, message: str, db: Session) -> AgentResponse:
-    logs: list[str] = []
-    state = get_or_create_state(user_id)
-    state_before = state.to_dict()
+    """
+    Public entry point. Owns the request timer — measures total time
+    and each phase, logs a TIMING line if ENABLE_TIMING=true.
+    """
+    timer = RequestTimer()
+    response = _handle_agent_message_inner(user_id, message, db, timer)
+    timer.log(user_id, routing_source=response.intent or "unknown")
+    return response
 
+
+def _handle_agent_message_inner(
+    user_id: str, message: str, db: Session, timer: RequestTimer
+) -> AgentResponse:
+    logs: list[str] = []
+
+    state = get_or_create_state(user_id)
+    timer.split("state_load")
+
+    state_before = state.to_dict()
     text = message.strip()
     lowered = text.lower()
 
@@ -143,10 +206,13 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
 
         if lowered in {"yes", "confirm", "please do", "go ahead"}:
             if state.pending_intent == "cancel_order" and pending_order_id:
+                timer.split("routing")  # no routing happened — still record the split
                 result = cancel_order(pending_order_id, db)
-                guardrail = map_guardrail(result["message"])
+                timer.split("tool")
 
+                guardrail = map_guardrail(result["message"])
                 clear_state(user_id)
+                timer.split("state_save")
                 state_after = state.to_dict()
 
                 if result["success"]:
@@ -311,6 +377,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_before=state_before,
             logs=logs,
             db=db,
+            timer=timer,
         )
 
     # ──────────────────────────────────────────
@@ -379,6 +446,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
     # ──────────────────────────────────────────
     route_result = route_message(text, user_id=user_id)
     routed, routing_source = normalize_route_result(route_result)
+    timer.split("routing")
 
     log_kv(logs, "routing_source", routing_source)
     log_kv(logs, "intent", routed.intent)
@@ -443,6 +511,10 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             )
 
         result = get_order(routed.order_id, db)
+        timer.split("tool")
+
+        # get_order doesn't mutate state — record a near-zero split for consistency
+        timer.split("state_save")
         state_after = state.to_dict()
 
         if not result["success"]:
@@ -617,6 +689,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
             state_before=state_before,
             logs=logs,
             db=db,
+            timer=timer,
         )
 
     # ── Fallback ──
