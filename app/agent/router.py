@@ -99,11 +99,44 @@ def route_message(message: str, user_id: str = "unknown") -> tuple[RoutedIntent,
         "order status", "where's my order",
         "check order", "check my order",
         "look up", "lookup",
+        # New — natural lookup phrases
+        "where is my package", "where's my package",
+        "has it shipped", "has my order shipped",
+        "any updates on my order", "any updates on",
+        "track my delivery", "track my package",
+        "show me my order", "show my order",
+        "what happened to my order",
+        "is it on the way", "is my order on its way",
+        "find my order", "get me the details",
+        "order details", "delivery status",
+        "what's the status", "what is the status",
+        "pull up my order", "pull up order",
+        "when will my order", "when will it arrive",
+        "expected delivery", "delivery update",
+        "has my package", "where is it",
     ]):
         result = RoutedIntent(intent="get_order", order_id=order_id)
 
     # ── Cancellation ──
-    elif "cancel" in lowered:
+    elif any(phrase in lowered for phrase in [
+        "cancel",
+        # New — natural cancellation phrases
+        "changed my mind", "change my mind",
+        "don't want it anymore", "dont want it anymore",
+        "don't want this anymore", "dont want this anymore",
+        "no longer need", "no longer want",
+        "stop my order", "stop the order", "stop my purchase",
+        "want to stop", "like to stop",
+        "reverse my order", "reverse this order", "reverse the order",
+        "can i reverse", "reverse this",
+        "undo my order", "undo the order", "undo my purchase",
+        "back out", "back out of",
+        "abort my order", "abort the order", "abort order",
+        "drop my order", "drop the order", "drop order",
+        "remove my order", "remove the order",
+        "i don't want", "i dont want",
+        "want to return and cancel",
+    ]):
         result = RoutedIntent(
             intent="cancel_order",
             order_id=order_id,
@@ -111,7 +144,25 @@ def route_message(message: str, user_id: str = "unknown") -> tuple[RoutedIntent,
         )
 
     # ── Refund ──
-    elif "refund" in lowered or "money back" in lowered or "return" in lowered:
+    elif any(phrase in lowered for phrase in [
+        "refund", "money back", "return",
+        # New — natural refund phrases
+        "arrived damaged", "arrived broken",
+        "wrong item", "incorrect item", "wrong product",
+        "send it back", "send this back", "send back",
+        "get my money", "get me my money",
+        "charged twice", "double charged", "overcharged",
+        "item is broken", "item was broken", "it's broken", "its broken",
+        "this is broken", "this was broken",
+        "not what i ordered", "not what I ordered",
+        "compensation",
+        "reimbursement", "reimburse",
+        "dispute", "chargeback",
+        "defective", "damaged item", "damaged product",
+        "never arrived", "never showed up", "didn't arrive",
+        "missing item", "item missing",
+        "want my money",
+    ]):
         result = RoutedIntent(
             intent="request_refund",
             order_id=order_id,
@@ -119,7 +170,7 @@ def route_message(message: str, user_id: str = "unknown") -> tuple[RoutedIntent,
         )
 
     # ── Bare order ID ──
-    elif len(message) <= 15 and order_id:
+    elif order_id:
         result = RoutedIntent(intent="get_order", order_id=order_id)
 
     # ── Unknown — escalate to LLM ──

@@ -179,7 +179,7 @@ def handle_agent_message(user_id: str, message: str, db: Session) -> AgentRespon
     """
     timer = RequestTimer()
     response = _handle_agent_message_inner(user_id, message, db, timer)
-    timer.log(user_id, routing_source=response.intent or "unknown")
+    timer.log(user_id, routing_source=response.text or "unknown")
     return response
 
 
